@@ -2,11 +2,9 @@ from cached_property import cached_property
 
 
 import numpy as np
-from scipy import interpolate
-import scipy.integrate as integrate
-from scipy.interpolate import RectBivariateSpline
-import matplotlib.pyplot as plt
-import scipy.constants as sc
+from tqdm import tqdm
+from scipy.stats import binned_statistic_2d
+from scipy.ndimage import gaussian_filter1d
 
 from astropy import constants, units, cosmology
 import warnings
@@ -30,545 +28,458 @@ class window_function(object):
 	This computs the window function for a single 8 MHz chunk of data (i.e when it is appropriate to make a coeval approximation)
 
 	Note to self: try to implement a function that auto-bins in bayesian block binning
+
 	"""
 	
 	def __init__(self, 
-	      		PSF,
-			    theta_x,
-			    theta_y,
-			    freqs,
-			    rest_freq = 1420.*units.MHz,
-			    cosmo=cosmology.Planck18,
+		  		PSF,
+				cosmo_units,
+				PSF_2 = None,
+				freq_taper=None, 
+				space_taper=None, 
+				freq_taper_kwargs=None, 
+				space_taper_kwargs=None, 
 				verbose = False,
-
 	):
+		
+		"""
+        Initialisation of the Power_Spectrum class.
+
+        Parameters
+        ----------
+		PSF : array_like
+			3D array of the point spread function. The last axis must be the frequency axis.
+		pspec: instance of the Power_Spectrum class
+		cosmo_units : instance of the Cosmo_Conversions class
+			Instance of the Cosmo_Conversions class containing the cosmological conversion factors.
+		PSF_2 : array_like, optional
+			3D array of the point spread function for the second map. The last axis must be the frequency axis.
+		freq_taper: str, optional
+			Name of the taper to use when Fourier transforming along the
+			frequency axis. Must be available in scipy.signal.windows.
+		space_taper: str, optional
+			Name of the taper to use when Fourier transforming along the
+			spatial axes. Must be a dspec.gen_window function.
+		freq_taper_kwargs: dict, optional
+			Extra parameters to use when calculating the frequency taper.
+		space_taper_kwargs: dict, optional
+			Extra parameters to use when calculating the spatial taper.
+		verbose : bool, optional
+			Whether to print out extra information during computation. Default is False.
+		"""
 
 		# ensure input shapes are consistent
 		if np.ndim(PSF) != 3:
 			raise ValueError('Data must be a 3d array of dim (npix, npix, nfreqs).')
 
-		if np.shape(PSF)[-1] != np.size(freqs):
+		if np.shape(PSF)[-1] != cosmo_units.z_npix:
 			raise ValueError("The last axis of the data array must be the frequency axis.")	    
-	    
 		
 		self.PSF = PSF
-		self.freqs = utils.comply_units(
-			value=freqs,
-            default_unit=units.MHz,
-            quantity="freqs",
-            desired_unit=units.Hz,
-		)
+		self.theta_x = (cosmo_units.theta_x)
+		self.theta_y = (cosmo_units.theta_y)
 
-		self.rest_freq = utils.comply_units(
-            value=rest_freq,
-            default_unit=units.MHz,
-            quantity="rest_freq",
-            desired_unit=units.Hz,
-		)
+		self.delta_x = cosmo_units.delta_x.value
+		self.delta_y = cosmo_units.delta_y.value
+		self.delta_z = cosmo_units.delta_z.value
 
-		# get all the z info from the mid req
-		self.mid_freq = np.mean(self.freqs)
-		self.z = (self.rest_freq / self.mid_freq) - 1.
+		self.y_npix = cosmo_units.y_npix
+		self.x_npix = cosmo_units.y_npix
+		self.z_npix = cosmo_units.z_npix
 
-		# Figure out the angular extent of the map.
-		self.theta_x = utils.comply_units(
-			value=theta_x,
-			default_unit=units.rad,
-			quantity="theta_x",
-			desired_unit=units.rad,
-		)
-		self.theta_y = utils.comply_units(
-			value=theta_y,
-			default_unit=units.rad,
-			quantity="theta_y",
-			desired_unit=units.rad,
-		)
+		self.Lx = cosmo_units.Lx.value
+		self.Ly = cosmo_units.Ly.value
+		self.Lz = cosmo_units.Lz.value
 		
-		self.y_npix = self.PSF.shape[0]
-		self.x_npix = self.PSF.shape[1]
-		self.freq_npix = self.PSF.shape[2]
-
-		# these two lines give you the physical dimensions of a pixel
-		# (inverse of sampling ratealong each axis)
-		self.delta_thetay = self.theta_y / self.PSF.shape[0]
-		self.delta_thetax = self.theta_x / self.PSF.shape[1]
-		self.delta_freq = np.diff(self.freqs).mean()
-
-		self.cosmo = cosmo
+		self.cosmo_volume = cosmo_units.cosmo_volume.value
+	
 		self.verbose = verbose
 
+		if PSF_2 is not None:
+			self.PSF_2 = PSF_2
+		else:
+			self.PSF_2 = None
 
-	@classmethod
-	def load_pspec(cls, pspec): 
 
-		params = ['theta_x','theta_y','freqs','rest_freq','cosmo']
-		cfg = {}
+		self.freq_taper = None
+		self.theta_x_taper = None
+		self.theta_y_taper = None
+		self.sky_taper = None
+		self.taper = None
+		self._parse_taper_info(
+			freq_taper=freq_taper,
+			space_taper=space_taper,
+			freq_taper_kwargs=freq_taper_kwargs,
+			space_taper_kwargs=space_taper_kwargs,
+		)
 
-		for param in params:
-			cfg[param] = pspec.__dict__.get(param)
+		if self.sky_taper is not None:
+		# raise warning that sky 
+			warnings.warn("Only frequency tapering is permitted. Sky tapering is not yet implemented. Please set sky_taper to None.")
+
+		print('Window function class initialised.')
+
+
+	def _parse_taper_info(self,
+					freq_taper=None,
+					space_taper=None,
+					freq_taper_kwargs=None,
+					space_taper_kwargs=None,
+					):
+		"""Calculate the taper for doing the FT given the taper parameters."""
+
+
+		taper_info = {"freq": {"type": None}, "space": {"type": None}}
+		if freq_taper is None and space_taper is None:
+			self.taper = 1
+			self.taper_info = taper_info
+			return
 
 		try:
-			cfg['PSF'] = pspec.PSF
+			from uvtools.dspec import gen_window
+		except (ImportError, ModuleNotFoundError):
+			warnings.warn(
+				"uvtools is not installed, so no taper will be applied. "
+				"Please install uvtools if you would like to use a taper."
+			)
+		try:
+			gen_window(freq_taper, 1)
+		except ValueError:
+			raise ValueError("Wrong freq taper. See uvtools.dspec.gen_window"
+								" for options.")
+		try:
+			gen_window(space_taper, 1)
+		except ValueError:
+			raise ValueError("Wrong freq taper. See uvtools.dspec.gen_window"
+								" for options.")
 
-		except AttributeError:
-			raise ValueError('The pspec does not have a PSF. Please give it a PSF!!!')
+		taper = np.ones((1, 1, 1), dtype=float)
+		if freq_taper is not None:
+			freq_taper_kwargs = freq_taper_kwargs or {}
+			taper_info["freq"]["type"] = freq_taper
+			taper_info["freq"].update(freq_taper_kwargs)
+			self.freq_taper = gen_window(
+				freq_taper, self.z_npix, **freq_taper_kwargs
+			)
+			taper = taper * self.freq_taper[None, None, :]
+
+		if space_taper is not None:
+			space_taper_kwargs = space_taper_kwargs or {}
+			taper_info["space"]["type"] = space_taper
+			taper_info["space"].update(space_taper_kwargs)
+			self.theta_y_taper = gen_window(
+				space_taper, self.y_npix, **space_taper_kwargs
+			)
+			self.theta_x_taper = gen_window(
+				space_taper, self.x_npix, **space_taper_kwargs
+			)
+			self.sky_taper = self.theta_y_taper[:, None] \
+				* self.theta_x_taper[None, :]
+			taper = taper * self.sky_taper[..., None]
+
+		self.taper_info = taper_info
+		self.taper = taper
+
+	def compute_Gtilde(self):
+		
+		"""
+		Compute the Gtilde matrix for the given PSF. 
+
+		"""
+		# compute the Gtilde matrix
+		if self.verbose:
+			print('Gtilde matrix computed.')
+		x = np.fft.fftshift(np.fft.fftfreq(self.PSF.shape[0], d = 1/(self.theta_x)))
+		y = np.fft.fftshift(np.fft.fftfreq(self.PSF.shape[0], d = 1/(self.theta_y)))
+
+		dx = x[1] - x[0]
+		dy = y[1] - y[0]
+		
+		if self.PSF_2 is not None:
+			self.Gtilde = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(self.PSF*self.taper,axes = (0,1)), axes = (0,1)), axes = (0,1)) *dx*dy
+			self.Gtilde_2 = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(self.PSF_2*self.taper,axes = (0,1)), axes = (0,1)), axes = (0,1))*dx*dy
+
+			return self.Gtilde, self.Gtilde_2
+		else:
+			self.Gtilde = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(self.PSF*self.taper,axes = (0,1)), axes = (0,1)), axes = (0,1))*dx*dy
 			
-		return cls(**cfg)
+			
+			return self.Gtilde
+
+	def compute_norm3D(self):
+
+		"""
+		Compute the normalization of the power spectrum. 
+
+		Returns
+		-------
+		norm3D : float
+			The normalization of the power spectrum in (kx,ky,kx) bins.
+
+		"""
+
+		self.compute_Gtilde()
+
+		taper_norm = 1
+		if isinstance(self.taper, np.ndarray):
+			if self.freq_taper is not None:
+				taper_norm *= np.sum(self.freq_taper ** 2) / self.z_npix
+			if self.theta_x_taper is not None:
+				taper_norm *= np.sum(self.theta_x_taper ** 2) / self.x_npix
+				taper_norm *= np.sum(self.theta_y_taper ** 2) / self.y_npix
+
+		if self.PSF_2 is not None:
+			Gtilde_squared = (self.Gtilde * np.conj(self.Gtilde_2))
+		else:
+			Gtilde_squared = (self.Gtilde * np.conj(self.Gtilde))
+		
+		Gtilde_squared /= taper_norm
+		norm = (1/self.Lz) * (np.sum(Gtilde_squared, axis = 2)* self.delta_z) #normalization factor for the 3D window function
+		norm = np.asarray(norm)
+		#stack norm on itself len(spw_window) times
+		norm = np.stack((norm,)*Gtilde_squared.shape[2], axis = 2)
+		return norm
 	
-	    # If we anticipate ever updating the observing parameters of a class
-    # instance, then we'll need to change these to properties instead of
-    # cached properties (and also change some other things).
-	@cached_property
-	def dRperp_dtheta(self):
-		"""Conversion from radians to cMpc."""
-		return self.cosmo.comoving_distance(self.z).to(units.Mpc).value
+### EVENTUALLY WRAP THE BINNING STUFF UP NICELY HERE! 
+	# def compute_norm2D(self):
+	# 	compute_norm3D()
 
-	@cached_property
-	def dRperp_dOmega(self):
-		"""Conversion from sr to cMpc^2."""
-		return self.dRperp_dtheta ** 2
 
-	@cached_property
-	def dRpara_dnu(self):
-		"""Conversion from Hz to cMpc."""
-		return (
-			constants.c * (1 + self.z)**2
-			/ (self.cosmo.H(self.z) * self.rest_freq)
-		).to("Mpc").value
+	# def compute_norm1D(self):
+	# 	compute_norm3D()
 
-	@cached_property
-	def X2Y(self):
-		"""Conversion from image cube volume to cosmological volume."""
-		return self.dRperp_dOmega * self.dRpara_dnu
+	def compute_kmodes(self):
 
-	@cached_property
-	def cosmo_volume(self):
-		"""Full cosmological volume of the image cube in cMpc^3."""
-		# If we update this to allow for varying pixel sizes, then this will
-		# need to be changed to an integral.
-		n_pix = self.x_npix * self.y_npix * self.freq_npix
-		return n_pix * self.volume_element
+		"""
+		Compute the Fourier grid. 
 
-	@cached_property
-	def volume_element(self):
-		return (
-			self.delta_thetax * self.delta_thetay * self.delta_freq * self.X2Y
+		"""
+		self.kx = np.fft.fftshift(
+		np.fft.fftfreq(self.x_npix, d=self.delta_x))  # 1/Mpc
+		self.kx *= 2*np.pi
+		
+		self.ky = np.fft.fftshift(
+			np.fft.fftfreq(self.y_npix, d=self.delta_y))  # 1/Mpc
+		self.ky *= 2*np.pi
+		
+		self.k_par = np.fft.fftshift(
+			np.fft.fftfreq(self.z_npix, d=self.delta_z)  )# 1/Mpc
+		self.k_par *= 2*np.pi
+
+		return self.kx, self.ky, self.k_par
+	
+
+	
+	def bin_Gtilde_kperp(self, PSF_UV, kperp_cutoff = None):
+
+		"""
+		Bin the Gtilde matrix in k_perp and k_parallel. 
+
+		"""
+		self.compute_kmodes()
+
+		kmag_perp = np.sqrt(self.kx[None, :] ** 2 + self.ky[:, None] ** 2)
+
+		#TODO: make this random 95 more general. Is there a rule for how fine you can bin this without gaps? 
+		if kperp_cutoff is not None:
+			self.kperp_bin = np.linspace((np.min(kmag_perp)),kperp_cutoff,95)
+		else:
+			self.kperp_bin = np.linspace((np.min(kmag_perp)),(np.max(kmag_perp)),95)
+
+
+		kpar_bin = self.k_par + np.diff(self.k_par)[0]/2
+		#add one value to the beginning of k_par_bin
+		kpar_bin = np.insert(kpar_bin,0,self.k_par[0] - np.diff(self.k_par)[0]/2)
+
+
+		kmag_perp_flat = np.reshape(
+					kmag_perp,
+					kmag_perp.size,
+					order='C'
+				)
+
+		gauss_fft_flat = np.reshape(
+			PSF_UV,
+			(kmag_perp.size, -1),
+			order='C'
+		).flatten('C')
+
+		# get pixel coordinates in Fourier space
+		coords = np.meshgrid(self.k_par,kmag_perp_flat)
+		coords = [coords[0].flatten(), coords[1].flatten()]
+
+		# histogram the power spectrum box
+		ret_real = binned_statistic_2d(
+			x=coords[0], # k_par
+			y=coords[1], # k_perp
+			values=gauss_fft_flat.real,
+			bins=[kpar_bin,self.kperp_bin],
+			statistic='mean',
 		)
-	
-	@cached_property
-	def delta_x(self): 
-		return self.delta_thetax * self.dRperp_dtheta
-	
-	@cached_property
-	def Lx(self): 
-		return self.delta_x * self.x_npix
-	
-	@cached_property
-	def delta_y(self): 
-		return self.delta_thetay * self.dRperp_dtheta
-	
-	@cached_property
-	def Ly(self): 
-		return self.delta_y * self.y_npix
-	
-	@cached_property
-	def delta_z(self): 
-		return self.delta_freq * self.dRpara_dnu
-	
-	@cached_property
-	def Lz(self): 
-		return self.delta_z * self.freq_npix
 
-	@cached_property
-	def delta_k_par(self):
-		return 2 * np.pi / self.Lz	
+		# histogram the power spectrum box
+		ret_imag = binned_statistic_2d(
+			x=coords[0], # k_par
+			y=coords[1], # k_perp
+			values=gauss_fft_flat.imag,
+			bins=[kpar_bin,self.kperp_bin],
+			statistic='mean',
+		)
 
-	@cached_property
-	def delta_k_perp(self):
-		return (2*np.pi)**2 / (self.Lx*self.Ly)
+		G_tilde_binned = ret_real.statistic + 1j*ret_imag.statistic
+
+		return G_tilde_binned 
+
 
 	
-	
-	def reshape_PSF(self):
+	def padding_Gtilde(self):
 
-		#TODO Need to make a reshaping function that places the PSF of each 
-		#frequency on the diagonal of each slice... 
+		"""
+		Pad the Gtilde matrix with zeros to expand the Fourier grid in the k_parallel direction. 
 
-		Npix_tot = self.x_npix*self.y_npix
-		self.big_PSF = np.zeros((Npix_tot,Npix_tot,self.freq_npix))
+		"""
+		self.compute_Gtilde()
 
-		for i in range(self.freq_npix):
-			print(i)
-			psf = np.reshape(self.PSF[:,:,i], (Npix_tot,))
+		if self.PSF_2 is not None:
+			G_tilde_binned = self.bin_Gtilde_kperp(self.Gtilde, kperp_cutoff = None)
+			G_tilde_2_binned =self.bin_Gtilde_kperp(self.Gtilde_2, kperp_cutoff = None)
 
-
-	def compute_FT_PSF(self, big_PSF):
-
-		# self.reshape_PSF()
-		self.FFT_PSF_1 = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(big_PSF, axes = 0), axes = 0), axes = 0) * (self.y_npix*self.x_npix) # multiply by N^2 to get fourier convention
-		self.FFT_PSF_1 *= ((self.delta_x*self.delta_y)/((2*np.pi)**2)) # 1/mpc^2
-		self.FFT_PSF_2 = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(self.FFT_PSF_1 , axes = 1), axes = 1), axes = 1)* (self.delta_x *self.delta_y)  #unitless
-
-	def compute_2D_FFT(self): 
-
-		''' Here we compute the 3D fft and also find the correspinding k's. To do this
-		we need to first work in the observers convetion and then convert back'''
-		
-		#first 2d fft where we fold along each row, 2d fft it, and unfold it. 
-		# self.stack_of_2d_Mtilde = np.zeros((self.Npix,self.Npix,self.nfreqs) ,dtype = complex)
-		
-		#define k_perps and delta_k_perps here. 
-
-		self.Mbar  = np.zeros((self.Npix,self.Npix,self.nfreqs), dtype = complex)
-	
-		for freq in range(self.nfreqs): # for each slice of M for each map, compute the window function. #self.nfreqs
-			M = self.M_matrix[:,:,freq]
-			for i in range(self.Npix): 
-				m = M[i] #fix a row (the elements are now labelled by k')
-				m = np.reshape(m,(self.npix_col, self.npix_row)).T #this stacks rows of m 
-				self.m_fft = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(m))) * (self.npix_col*self.npix_row) # multiply by N^2 to get fourier convention
-		
-				#unfold and append
-				self.m_fft *= ((self.delta_x*self.delta_y)/((2*np.pi)**2)) # 1/mpc^2
-				m_bar = np.reshape(self.m_fft,(self.Npix,))
-				self.Mbar[i,:,freq] = m_bar
-
-		self.M_tilde = np.zeros((self.Npix,self.Npix,self.nfreqs), dtype = complex)
-
-			#second 2d fft where we fold each column, 2d fft it, and unfold it. 
-		for freq in range(self.nfreqs):
-			for i in range(self.Npix): 
-				m = self.Mbar[:,i, freq]
-				m = np.reshape(m,(self.npix_col,self.npix_row))#this stacks rows of m so m[50]=m[1,0]
-				m_fft = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(m)))* (self.delta_x *self.delta_y)  #unitless
-				#unfold the column and append it back to big array
-				m_bar = np.reshape(m_fft,(self.Npix,))
-				self.M_tilde[:,i,freq] = m_bar
-
-			# unit Mpc^2 this is in fact not exactly M tilde, but has some elements swapped places along axis 1		
-			# Test 1: should be the case that this times x_true_tilde = x_obs_tilde 
-			#GOOD UNTIL M_TILDE !!!		
-
-		print('perp FFT done')
-
-	def compute_freq_FFT(self):
-
-		self.compute_2D_FFT()
-
-		self.full_Mtilde = np.zeros((self.Npix,self.Npix,self.nfreqs), dtype = complex)
-
-		for i in range(self.Npix):
-			for j in range(self.Npix):
-				m_fft = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(self.M_tilde[i,j,:]))) * self.delta_z #change this to the binned kperp #self.window_k_perp_binned_2[i,j,:])#self.window_perp_sorted[i,j,:]))
-				m_fft /= (2*np.pi) #should have a total of 1/(2pi)^3 so we had two above and one here.
-				self.full_Mtilde[i,j,:] = m_fft 
-
-		print('parallel FFT done')
-
-	def compute_square(self):
-
-		
-		self.compute_freq_FFT()
-
-		self.window = np.real((self.full_Mtilde)*(np.conj(self.full_Mtilde)))# now we have the full npix x npix window matrix.
-
-		print('square done')
-
-	def sort_window_kperp(self):
-
-		'''Here we sort the kperp direction so that the window function can be binned according to kx and ky. '''
-
-		self.compute_square()
-
-		indices = np.argsort(self.k_perp) #find the indices that sort self.k
-		J = np.take(self.window,indices,axis = 0) #axis 0 reorders rows, 
-		window_sorted = np.take(J,indices,axis =1)#axis 1 reorders columns 
-		self.window_perp_sorted = np.asarray(window_sorted)
-		self.k_perp_sorted = np.sort(self.k_perp) # now you can sort k's
-
-		print('sorted in k_perp')
-
-		#Now we have the full 3D window function but recall that the freq direction is labelled by (kpar - kpar')
-
-# _________________________________________________________METHODS FOR THE 2D PSPEC_________________________________________________
-
-
-	def compute_2D_pspec_estimate(self,pspec,kpspec,k_obs):
-
-		''' This method takes in the covariance of the true sky as well as the observable k_obs = (kpar,kperp) given an experiment. 
-		By defining the k_obs first it allows you to only calculate the k that you care about. '''
-
-		
-		self.compute_k_par()
-		self.compute_k_perp()
-		self.sort_window_kperp()
-
-		self.interpolate_pspec_true(pspec, kpspec) ## you should be able to import the "functionized" true 2D spectrum (i.e. interpolate the input theory spectrum). 
-
-		k_par_obs = k_obs# these are the k's we want to output and need to use k_par_obs to do the subtraction thingy. I think by construction your k_perp_obs are already defined from the window
-
-		self.p_estimate = np.zeros((len(k_par_obs),self.Npix))
-
-		for i in range(len(k_par_obs)): # for each row of the estimate spectrum
-			for j in range(self.nfreqs): # sum over kpar_prime
-				k_par_prime = -(self.k_par_minus_prime[j]-k_par_obs[i]) 
-				p_true = np.reshape(self.f(k_par_prime,self.k_perp_sorted).T,(self.Npix,))
-				self.p_estimate[i,:] += (self.window_perp_sorted[:,:,j].dot(p_true))*(self.delta_k_perp*self.delta_k_par) #sum over k_perp_prime
-
-
-	def one_window(self):
-		# self.compute_k_par()
-		# self.compute_k_perp()
-		# self.sort_window_kperp()
-
-
-		k_to_plot = 0.9
-		print(k_to_plot)
-		
-		self.k_par_prime = -(self.k_par_minus_prime-k_to_plot)
-
-		print(self.k_par_prime)
-
-		indices = np.argsort(self.k_par_prime) #find the indices that sort self.k
-
-		self.k_prime_sorted = np.sort(self.k_par_prime) # now you can sort k's
-
-		self.window_to_plot = np.take(self.window_perp_sorted[1,:,:],indices,axis = 1) #axis 0 reorders rows, 
-
-		self.window_to_plot /= max(np.reshape(self.window_to_plot, (len(self.k_perp_sorted)*self.nfreqs)))
-
-
-	def bin_p_estimate(self,pspec,kpspec,k_obs):
-		''' here we are going to bin along the k unprimed direction which corresponds to binning rows together. '''
-		
-		# self.compute_2D_pspec_estimate()
-		
-		hist, self.bin_edges = np.histogram(self.k_perp_sorted, bins = self.nbins)
-
-		# self.window_k_perp_binned = np.zeros((self.nbins, self.Npix, self.nfreqs))
-
-		# for i in range(len(hist)):
-		# 	if i == 0:
-		# 		ave = np.sum( self.window_perp_sorted[0:hist[i]-1,:,:], axis  = 0)/(hist[i])
-		# 		self.window_k_perp_binned[i] = ave
-		# 	else: 
-		# 		ave = np.sum( self.window_perp_sorted[np.sum(hist[:i]):np.sum(hist[:i+1])-1,:,:], axis  = 0)/hist[i]
-		# 		self.window_k_perp_binned[i] = ave
-
-		# ## can repeat this procedure on axis = 1 if you want to bin the k primed perps as well. 
-		self.p_estimate_binned = np.zeros((self.nfreqs, self.nbins))
-
-		for i in range(len(hist)):
-			if i == 0:
-				ave = np.sum(self.p_estimate[:,0:hist[i]-1], axis  = 1)/(hist[i])
-				self.p_estimate_binned[:,i] = ave
-			else: 
-				ave = np.sum( self.p_estimate[:,np.sum(hist[:i]):np.sum(hist[:i+1])-1], axis  = 1)/hist[i]
-				self.p_estimate_binned[:,i] = ave
-
-		print('binned in k_perp')
-
-
-	######################## METHODS RELATED TO POWER SPECTRUM ESTIMATION ################################
-
-	def interpolate_pspec_true(self, pspec, kpspec):
-
-		''' here you import in the true 2D power spectrum that was made using the pspec code from the realization of the unvierse. '''
-		kpar, kperp = kpspec[0], kpspec[1]
-
-		theory_spec_arr = pspec
-
-		self.f = RectBivariateSpline(kpar,kperp, theory_spec_arr)#, bounds_error = False, fill_value = 0)
-
-		# plt.pcolor(kperp,kpar,self.f(kperp,kpar),shading='auto')
-		# plt.colorbar()
-
-
-
-
-
-
-#_________________________________________________________________________________________________________________________________
-#_________________________________________________________________________________________________________________________________
-#_________________________________________________________________________________________________________________________________
-#_________________________________________________________________________________________________________________________________
-
-
-
-	def compute_cross(self):
-
-		self.FFT()
-
-		self.window = np.real((self.G_matrix)*(np.conj(self.G_matrix)))#
-
-
-	def p_estimate_full(self,cov):
-
-		self.compute_cross()
-
-		'''compute the full k-vector estimate spectrum takes in the un-sorted covariance diagonal of the input theory field'''
-
-		if isinstance(cov,np.ndarray) or isinstance(cov,tuple):
-
-			ps = cov*((self.delta_phi*self.delta_theta)**2)/(self.L_x*self.L_y) #Maybe conside still using the covariance...
-
-		elif callable(cov): 
-			ps = cov(self.k)
+			self.Gtilde_pad = np.pad(G_tilde_binned, ((self.z_npix, self.z_npix), (0,0)), mode = 'constant', constant_values = 0)
+			self.Gtilde_2_pad = np.pad(G_tilde_2_binned, ((self.z_npix, self.z_npix), (0,0)), mode = 'constant', constant_values = 0)
+			
+			return self.Gtilde_pad, self.Gtilde_2_pad
 
 		else:
-
-			raise ValueError('Please give me a theoretical spectrum!')
-
-
-		self.MM_cov_diag = (self.window).dot(ps)
-
-
-	def sort_estimate_spec(self,cov):
-
-		self.p_estimate_full(cov)
-
-		indices = np.argsort(self.k) #find the indices that sort self.
-
-		MM_cov_diag_sorted = np.take(self.MM_cov_diag,indices)#axis 1 sorts the columns into the right order
-		self.MM_cov_diag_sorted = np.asarray(MM_cov_diag_sorted)#why is this transpose here??? I think because of reshaping but check
-		self.k_sorted = np.sort(self.k)
-
-	def spec_binning(self, cov):
-
-		self.sort_estimate_spec(cov)
-
-		idx = np.argwhere(self.k_sorted > 0.15)
-
-		self.k_del = np.delete(self.k_sorted,idx) 
-
-		indices = np.argsort(self.k_del)
-		self.MM_cov_del = np.delete(self.MM_cov_diag_sorted, idx)
-		self.MM_cov_del = np.take(self.MM_cov_del,indices)
-		self.k_del = np.sort(self.k_del)
-
-		hist, self.bin_edges = np.histogram(self.k_del, bins = self.nbins)
-		self.pk_window_binned = np.zeros(self.nbins)
-
-		min_index = 0
-		for i in range(len(self.bin_edges)-1): #pick a bin!
-			max_index = np.sum(hist[:i+1])#hist[i] + min_index 
-			min_index = np.sum(hist[:i])
-			a = np.sum(self.MM_cov_del[min_index:max_index]) #for row j, sum the columns from min to max index of the bin
-			c = hist[i] #number of P_k values in that bin 
-			self.pk_window_binned[i] = a/c #compute average W that bin
-
-
-	def compute_pspec_estimate(self,cov): 
-
-		self.spec_binning(cov)
-
-		return  self.bin_edges[1:self.nbins], self.pk_window_binned[1:] # leave out the bottom and top bin edge, don't plot bottom bin cuz has k = 0 in it
-
-
-######################################################################################################
-
-############################# METHODS RELATED TO ERROR BAR ###########################################
-	def sort_window(self):
-
-		self.FFT()
-
-		indices = np.argsort(self.k) #find the indices that sort self.k
-		J = np.take(self.window,indices,axis = 0) #axis 0 reorders rows, 
-		window_sorted = np.take(J,indices,axis =1)#axis 1 reorders columns 
-		self.window_sorted = np.asarray(window_sorted)
-		self.k_sorted = np.sort(self.k) # now you can sort k's 
-
-	def bin_window(self):
-		self.sort_window()
-
-		hist, self.bin_edges = np.histogram(self.k_sorted, bins = self.nbins)
-
-		self.W_collapse = np.zeros((self.nbins,self.Npix))
-
-		for j in range(self.nbins): # pick a column, only 30 now!
-			min_index = 0
-			for i in range(len(self.bin_edges)-1): #pick a bin!
-				max_index = np.sum(hist[:i+1])#hist[i] + min_index 
-				min_index = np.sum(hist[:i])
-				####### bin W values #####
-				w_real = np.real(self.window_sorted)
-				a = np.sum(w_real[min_index:max_index,j])
-				c = hist[i] #number of entries in that bin 
+			G_tilde_binned = self.bin_Gtilde_kperp(self.Gtilde, kperp_cutoff = None)
 			
-				self.W_collapse[i,j] = a/c #compute average W in that bin
-
-		print(self.W_collapse.shape)
-
-
-		rounded_k = np.around(self.k_sorted, decimals = 3)
-		self.reduced_k = np.sort(list(set(rounded_k)))
-
-		binned = []
-
-		for i in range(len(self.reduced_k)):# pick a bin
-			a = 0
-			c = 0
-			for j in range(len(self.k_sorted)): # check which elements are in that bin
-				
-				if self.reduced_k[i] == np.around(self.k_sorted[j],decimals = 3):
-					a += self.W_collapse[:,j]
-					c += 1
-					
-				else:
-					pass
-			
-			binned.append(a/c)
-
-		self.window_binned = np.asarray(binned).T[1:,1:]
-
-		self.reduced_k = self.reduced_k[1:]
-
-	def normalize_window(self):
-
-		'''normalize the rows of the binned window'''
-
-		self.bin_window()
-
-		window_norm = []
-
-		#normalization
-		for i in range(self.window_binned.shape[0]):
-			norm = 1/(np.sum(self.window_binned[i])) #find the normalization factor which is 1/sum of the row
-			window_norm.append(self.window_binned[i]*norm)
-
-		self.window_norm = np.asarray(window_norm)
-
-	def compute_error_bars(self):
-
+			self.Gtilde_pad = np.pad(G_tilde_binned, ((self.z_npix, self.z_npix), (0,0)), mode = 'constant', constant_values = 0)
+			return self.Gtilde_pad
 	
-		self.normalize_window()
+	def compute_Wpar(self):
+		
+		"""
+		Compute the window function in the parallel direction. 
 
-		def find_nearest(array, value):
-			array = np.asarray(array)
-			idx = (np.abs(array - value)).argmin()
-			return idx
+		"""
+		self.padding_Gtilde()
 
-		lower_bound = np.zeros(self.nbins-1)
-		upper_bound = np.zeros(self.nbins-1)
-		self.k_to_plot = np.zeros(self.nbins-1)
-
-		for i in range(self.window_binned.shape[0]): # try it with the unbinned version maybe?
-
-			pdf = self.window_binned[i]
-			prob = pdf/float(sum(pdf))
-			cum_prob = np.cumsum(prob)
-
-			lower_idx = find_nearest(cum_prob,0.16)
-			upper_idx = find_nearest(cum_prob,0.84)
-			mid_idx = find_nearest(cum_prob, 0.5)
-
-			lower_bound[i] = self.reduced_k[lower_idx]
-			upper_bound[i] = self.reduced_k[upper_idx]
-			mid_k = self.reduced_k[mid_idx]
-
-
-			self.k_to_plot[i] = mid_k
+		taper_norm = 1
+		if isinstance(self.taper, np.ndarray):
+			if self.freq_taper is not None:
+				taper_norm *= np.sum(self.freq_taper ** 2) / self.z_npix
+			if self.theta_x_taper is not None:
+				taper_norm *= np.sum(self.theta_x_taper ** 2) / self.x_npix
+				taper_norm *= np.sum(self.theta_y_taper ** 2) / self.y_npix
+		
+		if self.PSF_2 is not None:
+			F_par = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(self.Gtilde_pad, axes = 0), axis = 0), axes = 0) * self.delta_z
+			F_par_2 = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(self.Gtilde_2_pad, axes = 0), axis = 0), axes = 0) * self.delta_z
+			self.k_par_long = np.fft.fftshift(np.fft.fftfreq(self.Gtilde_pad.shape[0], self.delta_z))
+			self.k_par_long *= 2*np.pi
 			
-		self.error_bars = np.asarray(list(zip(lower_bound, upper_bound))).T
+			self.Wpar_kperp_kz = ((F_par*np.conj(F_par_2)) / taper_norm).T
+			return self.Wpar_kperp_kz.real
+		
+		else:
+			F_par = np.fft.fftshift(np.fft.fft(np.fft.ifftshift(self.Gtilde_pad, axes = 0), axis = 0), axes = 0) * self.delta_z
+			self.k_par_long = np.fft.fftshift(np.fft.fftfreq(self.Gtilde_pad.shape[0], self.delta_z))
+			self.k_par_long *= 2*np.pi
+
+			self.Wpar_kperp_kz = ((F_par*np.conj(F_par))/taper_norm).T
+			return self.Wpar_kperp_kz.real
 		
 
+	
+	def build_Wkper_kkz(self):
+
+
+		"""
+		Build the window function in the k_perp and k_parallel directions. 
+
+		"""
+		self.compute_Wpar()
+		nperp = self.Wpar_kperp_kz.shape[0]
+		npar = self.Wpar_kperp_kz.shape[1]
+
+
+		self.W_kperp_kkz = np.zeros((nperp,npar,npar), dtype = complex)
+
+		for i in tqdm(range(nperp)):
+			for j in range(npar):
+				for k in range(npar):
+					idx = (j - k) + npar//2
+					if idx < 0 or idx >= npar:
+						continue
+					self.W_kperp_kkz[i,j,k] = self.Wpar_kperp_kz[i,idx]
+	
+	
+	
+	def compute_1D_window(self,k, k_prime, *args,norm = True, smoothing = False, sigma = 1, **kwargs):
+
+		"""
+		Compute the 1D window function in k_perp and k_parallel directions. 
+
+		Parameters
+		----------
+		k : array_like
+			k bins for which you want to calculate the window functions.
+		k_prime : array_like
+			k grid for which you want to calculate the window functions.
+		*args : list
+		norm : bool, optional
+			Normalize the window function. Default is True.
+		smoothing : bool, optional
+			Apply a Gaussian smoothing to the window function. Default is False.
+		sigma : float, optional
+			The standard deviation of the Gaussian smoothing kernel. Default is 1.
+		**kwargs : dict
+			Additional keyword arguments to pass to the Gaussian smoothing function.
+
+		Returns
+		-------
+		W_k_kprime : array_like
+			The 1D window functions.
+
+		"""
+		self.build_Wkper_kkz()
+
+
+
+		nperp = self.W_kperp_kkz.shape[0]
+		npar = self.W_kperp_kkz.shape[1]
+		#get k bin edges 
+		k_edges = k + np.diff(k)[0]/2
+		k_edges = np.insert(k_edges,0,k[0] - np.diff(k)[0]/2)
+		
+		### warnings.filterwarnings("This only works for evenly linearly spaced k bins")
+
+		#make this len(k_edges) and have the 0 row be the garbage bin
+		self.W_k_kprime = np.zeros((len(k_edges), len(k_prime)))
+
+		for i in tqdm(range(nperp)):
+			for j in range(npar):
+
+				k_mag = np.sqrt(self.kperp_bin[i]**2 + self.k_par_long[j]**2)
+				# check with k bin it falls into
+				idx_1 = np.digitize(k_mag, k_edges)
+				if idx_1 > len(k):
+					continue	
+				for l in range(npar):
+					k_prime_mag = np.sqrt(self.kperp_bin[i]**2 + self.k_par_long[l]**2)
+					idx_2 = np.digitize(k_prime_mag, k_prime)
+					if idx_2 >= len(k_prime):
+						continue
+			
+					self.W_k_kprime[idx_1, idx_2] += self.W_kperp_kkz[i,j,l].real
+		if norm:
+			N = np.sum(self.W_k_kprime, axis = 1) 
+			N *= np.diff(k_prime)[0]
+			self.W_k_kprime = self.W_k_kprime/N[:,None]
+			# W_k_kprime now has units of Mpc
+
+		if smoothing:
+			self.W_k_kprime = gaussian_filter1d(self.W_k_kprime, sigma = sigma, axis = 1)
+		
+		#remove the garbage bin
+		return k_prime, self.W_k_kprime[1:,:]
+	
