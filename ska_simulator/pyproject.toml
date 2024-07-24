@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0",
+            "astropy",
+            "numpy",
+            "cached_property",
+            "scipy",
+            "healpy"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ska_simulator"
+version = "0.0.1"
+authors = [
+  { name="Rebecca Ceppas de Castro" },
+  { name="Hannah Fronenberg" },
+  { name="Adelie Gorce", email="adelie.gorce@gmail.com"},
+  { name="Adrian Liu" },
+  { name="Lisa McBride" },
+  { name="Bobby Pascua" },
+]
+description = "A small package to simulate SKA observations."
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/adeliegorce/SKA_SDC3/"
+"Bug Tracker" = "https://github.com/adeliegorce/SKA_SDC3/issues/"
