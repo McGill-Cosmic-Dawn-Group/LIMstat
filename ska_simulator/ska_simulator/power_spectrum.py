@@ -18,16 +18,13 @@ class power_spectrum(object):
     def __init__(
         self,
         data,
-        theta_x,
-        theta_y,
+        cosmo_units, 
         freqs,
         data2=None,
-        rest_freq=1420.*units.MHz,
-        cosmo=cosmology.Planck18,
-        freq_taper=None,
-        space_taper=None,
-        freq_taper_kwargs=None,
-        space_taper_kwargs=None,
+        freq_taper=None, 
+        space_taper=None, 
+        freq_taper_kwargs=None, 
+        space_taper_kwargs=None, 
         convert_data_to=None,
         beam_area=None,
         PSF=None,
@@ -43,23 +40,12 @@ class power_spectrum(object):
                 of.
                 It should be fed with units equivalent to K or Jy/beam.
                 The third dimension must be the frequency axis.
-            theta_x: float
-                Angular size along one sky-plane dimension in RADIANS.
-            theta_y: float
-                Angular size along the other sky-plane dimension in RADIANS.
-            freqs: list or array of floats.
-                List of frequencies the signal was measured on.
-                Frequencies must be given in MHZ.
+            cosmo_units: instance of the cosmo_units class
+                Set of properties of cosmo_units class that describe the size, resolution,
+                of the box in Mpc. 
             data2: array of real floats.
-                For cross-spectra: data2 is cross-correlated with data
-                to compute the power spectrum.
-                It should have the same units and shape as data.
-            rest_freq: float
-                Rest-frequency of the emission line in units.MHz.
-                Default is 1420 for the 21cm line.
-            cosmo: astropy.cosmology class
-                Cosmology to use for computations.
-                Default is Planck18.
+                Another data set if you want to compute a cross spectrum instead 
+                of an auto-spectrum.
             freq_taper: str, optional
                 Name of the taper to use when Fourier transforming along the
                 frequency axis. Must be available in scipy.signal.windows.
@@ -82,28 +68,43 @@ class power_spectrum(object):
             verbose: bool
                 Whether to output messages when running functions.
         """
+        self.y_npix = cosmo_units.y_npix
+        self.x_npix = cosmo_units.y_npix
+        self.z_npix = cosmo_units.z_npix
+
+        self.delta_x = cosmo_units.delta_x.value
+        self.delta_y = cosmo_units.delta_y.value
+        self.delta_z = cosmo_units.delta_z.value
+
+  
+        self.delta_kx = cosmo_units.delta_kx.value
+        self.delta_ky = cosmo_units.delta_ky.value
+        self.delta_kz = cosmo_units.delta_k_par.value
+        
+        self.Lz = cosmo_units.Lz.value
+        self.delta_z = cosmo_units.delta_z.value
+
+        self.volume_element = cosmo_units.volume_element.value
+        self.cosmo_volume = cosmo_units.cosmo_volume.value
+        
+
+
+        self.freqs = utils.comply_units(
+                value=freqs,
+                default_unit=units.MHz,
+                quantity="freqs",
+                desired_unit=units.Hz,
+            )
+        
         # ensure input shapes are consistent
         if np.ndim(data) != 3:
             raise ValueError(
                 'Data must be a 3d array of dim (npix, npix, nfreqs).'
             )
-        if np.shape(data)[-1] != np.size(freqs):
+        if np.shape(data)[-1] != self.z_npix:
             raise ValueError(
                 "The last axis of the data array must be the frequency axis."
             )
-
-        self.freqs = utils.comply_units(
-            value=freqs,
-            default_unit=units.MHz,
-            quantity="freqs",
-            desired_unit=units.Hz,
-        )
-        self.rest_freq = utils.comply_units(
-            value=rest_freq,
-            default_unit=units.MHz,
-            quantity="rest_freq",
-            desired_unit=units.Hz,
-        )
 
         if beam_area is not None:
             beam_area = utils.comply_units(
@@ -120,6 +121,9 @@ class power_spectrum(object):
                 raise ValueError('Missing beam_area to convert data!')
         self.beam_area = getattr(beam_area, "value", beam_area)
 
+
+        #TODO: Need to fix this unit conversion stuff!!
+
         self.Jy_to_K = units.brightness_temperature(
             self.freqs*units.Hz, beam_area
         )
@@ -133,7 +137,6 @@ class power_spectrum(object):
                               "are not compatible with mK or Jy/beam...")
         else:
             self.data_unit = convert_data_to or units.mK
-        self.pk_unit = self.data_unit**2 * units.Mpc ** 3
 
         self.data = utils.comply_units(
             value=data,
@@ -150,38 +153,14 @@ class power_spectrum(object):
             )
         self.data = self.data.real
 
-        # get all the z info from the mid req
-        self.mid_freq = np.mean(self.freqs)
-        self.z = (self.rest_freq / self.mid_freq) - 1.
+        # self.data_unit = data.unit
+        self.pk_unit = self.data_unit**2 * units.Mpc ** 3
 
-        # Figure out the angular extent of the map.
-        self.theta_x = utils.comply_units(
-            value=theta_x,
-            default_unit=units.rad,
-            quantity="theta_x",
-            desired_unit=units.rad,
-        )
-        self.theta_y = utils.comply_units(
-            value=theta_y,
-            default_unit=units.rad,
-            quantity="theta_y",
-            desired_unit=units.rad,
-        )
-
-        self.y_npix = self.data.shape[0]
-        self.x_npix = self.data.shape[1]
-        self.freq_npix = self.data.shape[2]
-
-        # these two lines give you the physical dimensions of a pixel
-        # (inverse of sampling ratealong each axis)
-        self.delta_thetay = self.theta_y / self.data.shape[0]
-        self.delta_thetax = self.theta_x / self.data.shape[1]
-        self.delta_freq = np.diff(self.freqs).mean()
+        
 
         # define Fourier axes
-        self.compute_eta_nu()
+        # self.compute_eta_nu()
 
-        self.cosmo = cosmo
         self.verbose = verbose
 
         self.freq_taper = None
@@ -230,12 +209,10 @@ class power_spectrum(object):
                               stacklevel=2)
                 self.PSF = self.PSF.value
             # normalise
-            dz = self.dRpara_dnu * self.delta_freq
-            Lz = dz * self.freq_npix
-            rpar = np.arange(0., Lz, step=dz)  # Mpc
+            rpar = np.arange(0., self.Lz, step=self.delta_z)  # Mpc
             fft_psf = self.take_ft(self.PSF, axes=(0, 1))
             # PS normalisation accounting for PSF
-            self.norm_map = np.trapz(np.abs(fft_psf)**2, rpar) / Lz  # unit 1
+            self.norm_map = np.trapz(np.abs(fft_psf)**2, rpar) / self.Lz  # unit 1
             # self.PSF /= np.sqrt(self.norm_map[..., None])
             if not np.allclose(self.taper, 1.):
                 raise NotImplementedError('PSF-normalisation with tapering '
@@ -243,46 +220,8 @@ class power_spectrum(object):
         else:
             self.PSF = None
             self.norm_map = np.ones((self.x_npix, self.y_npix))
+       
 
-    # If we anticipate ever updating the observing parameters of a class
-    # instance, then we'll need to change these to properties instead of
-    # cached properties (and also change some other things).
-    @cached_property
-    def dRperp_dtheta(self):
-        """Conversion from radians to cMpc."""
-        return self.cosmo.comoving_distance(self.z).to(units.Mpc).value
-
-    @cached_property
-    def dRperp_dOmega(self):
-        """Conversion from sr to cMpc^2."""
-        return self.dRperp_dtheta ** 2
-
-    @cached_property
-    def dRpara_dnu(self):
-        """Conversion from Hz to cMpc."""
-        return (
-            constants.c * (1 + self.z)**2
-            / (self.cosmo.H(self.z) * self.rest_freq)
-        ).to("Mpc").value
-
-    @cached_property
-    def X2Y(self):
-        """Conversion from image cube volume to cosmological volume."""
-        return self.dRperp_dOmega * self.dRpara_dnu
-
-    @cached_property
-    def cosmo_volume(self):
-        """Full cosmological volume of the image cube in cMpc^3."""
-        # If we update this to allow for varying pixel sizes, then this will
-        # need to be changed to an integral.
-        n_pix = self.x_npix * self.y_npix * self.freq_npix
-        return n_pix * self.volume_element
-
-    @cached_property
-    def volume_element(self):
-        return (
-            self.delta_thetax * self.delta_thetay * self.delta_freq * self.X2Y
-        )
 
     def take_ft(self, data, axes=None):
         """
@@ -349,11 +288,12 @@ class power_spectrum(object):
                 axes=axes
             )
         )
-        # TODO: add factor of Npix total here for convention.
+
+        npix = self.x_npix * self.y_npix * self.z_npix
+        data *= npix
         data /= ((2*np.pi)**ft_data.ndim)
         return data
 
-    # TODO: change to rFFT to speed up computing times
     def FFT_crossxx(self):
         """
         Computes the FT**2 of data.
@@ -374,11 +314,12 @@ class power_spectrum(object):
         taper_norm = 1
         if isinstance(self.taper, np.ndarray):
             if self.freq_taper is not None:
-                taper_norm *= np.sum(self.freq_taper ** 2) / self.freq_npix
+                taper_norm *= np.sum(self.freq_taper ** 2) / self.z_npix
             if self.theta_x_taper is not None:
                 taper_norm *= np.sum(self.theta_x_taper ** 2) / self.x_npix
                 taper_norm *= np.sum(self.theta_y_taper ** 2) / self.y_npix
-
+		
+        print('taper norm:', taper_norm)
         return np.real(
             np.conj(fft_data) * fft_data
         ) / (self.cosmo_volume * taper_norm) / self.norm_map[..., None] \
@@ -405,7 +346,7 @@ class power_spectrum(object):
             )
 
         # fourier transform along spatial directions
-        fft_data1 = self.take_ft(self.data * self.taper, axes=[0, 1])
+        fft_data1 = self.take_ft(self.data * self.taper, axes=[0, 1]) 
         fft_data2 = self.take_ft(self.data2 * self.taper, axes=[0, 1])
 
         # Take FT along frequency axis
@@ -417,7 +358,7 @@ class power_spectrum(object):
         taper_norm = 1
         if isinstance(self.taper, np.ndarray):
             if self.freq_taper is not None:
-                taper_norm *= np.sum(self.freq_taper ** 2) / self.freq_npix
+                taper_norm *= np.sum(self.freq_taper ** 2) / self.z_npix
             if self.theta_x_taper is not None:
                 taper_norm *= np.sum(self.theta_x_taper ** 2) / self.x_npix
                 taper_norm *= np.sum(self.theta_y_taper ** 2) / self.y_npix
@@ -425,25 +366,26 @@ class power_spectrum(object):
         return np.real(
             np.conj(fft_data1) * fft_data2
         ) / (self.cosmo_volume * taper_norm) / self.norm_map[..., None] \
-            * self.pk_unit
+            * self.pk_unit # mK^2 Mpc^3
 
-    def compute_eta_nu(self):
+    
+    def compute_k_modes(self):
         """Define observational Fourier axes."""
         # TODO: just make these all class properties and remove this function
-        self.u_x = np.fft.fftshift(
-            np.fft.fftfreq(self.x_npix, d=self.delta_thetax)
-        )  # 1/rad
-        self.u_y = np.fft.fftshift(
-            np.fft.fftfreq(self.y_npix, d=self.delta_thetay)
-        )  # 1/rad
-        self.eta = np.fft.fftshift(
-            np.fft.fftfreq(self.freq_npix, d=self.delta_freq)
-        )  # 1/Hz = s
+        self.kx = np.fft.fftshift(
+            np.fft.fftfreq(self.x_npix, d=self.delta_x))  # 1/Mpc
+        self.kx *= 2*np.pi
+        
+        self.ky = np.fft.fftshift(
+            np.fft.fftfreq(self.y_npix, d=self.delta_y))  # 1/Mpc
+        self.ky *= 2*np.pi
+        
+        self.k_par = np.fft.fftshift(
+            np.fft.fftfreq(self.z_npix, d=self.delta_z)  )# 1/Mpc
+        self.k_par *= 2*np.pi
 
-        self.delta_ux = np.diff(self.u_x).mean()  # 1/rad
-        self.delta_uy = np.diff(self.u_y).mean()  # 1/rad
-        self.delta_eta = np.diff(self.eta).mean()  # 1/Hz = s
 
+        
     def _parse_taper_info(
         self,
         freq_taper=None,
@@ -482,7 +424,7 @@ class power_spectrum(object):
             taper_info["freq"]["type"] = freq_taper
             taper_info["freq"].update(freq_taper_kwargs)
             self.freq_taper = gen_window(
-                freq_taper, self.freq_npix, **freq_taper_kwargs
+                freq_taper, self.z_npix, **freq_taper_kwargs
             )
             taper = taper * self.freq_taper[None, None, :]
 
@@ -503,36 +445,9 @@ class power_spectrum(object):
         self.taper_info = taper_info
         self.taper = taper
 
-    def compute_Ubox(self):
-        """
-        Compute norm of observational Fourier axes.
-        """
-        try:
-            self.u_y
-        except AttributeError:
-            self.compute_eta_nu()
-        U_box = np.sqrt(self.u_y[:, None] ** 2 + self.u_x**2)  # 1/rad
-        return U_box
-
-    def compute_spatial_fourier_modes(self):
-        """
-        Define cosmological Fourier axes.
-        """
-
-        _ = self.compute_Ubox()
-
-        # compute k_par, k_perps
-        self.k_par = 2 * np.pi * self.eta / self.dRpara_dnu  # 1 / Mpc
-        self.kx = 2 * np.pi * self.u_x / self.dRperp_dtheta  # 1 / Mpc
-        self.ky = 2 * np.pi * self.u_y / self.dRperp_dtheta  # 1 / Mpc
-
-        # the delta's are also now z-dependent
-        self.delta_kx = 2 * np.pi * self.delta_ux / self.dRperp_dtheta
-        self.delta_ky = 2 * np.pi * self.delta_uy / self.dRperp_dtheta
-        self.delta_kz = 2 * np.pi * self.delta_eta / self.dRpara_dnu
 
     def compute_2D_pspec(self, ps_data=None,
-                         k_perp_bin=None, k_par_bin=None,
+                         kperp_edges=None, kpar_edges=None,
                          nbins_perp=30, nbins_par=30):
         """
         Compute cylindrical power spectrum of self.data.
@@ -547,13 +462,13 @@ class power_spectrum(object):
                 Can be fed if it has already been computed with
                 self.FFT_crossxx.
                 Default is None.
-            k_perp_bin: array or list of floats
-                k-perpendicular bins to use.
+            kperp_edges: array or list of floats
+                k-perpendicular bin edges to use.
                 Units should be Mpc-1.
                 All values should be positive.
                 Default is None.
-            k_par_bin: array or list of floats
-                k-parallel bins to use.
+            kpar_edges: array or list of floats
+                k-parallel bin edges to use.
                 Units should be Mpc-1.
                 All values should be positive.
                 Default is None.
@@ -596,14 +511,14 @@ class power_spectrum(object):
             )
         ps_data = np.real(ps_data)
 
-        self.compute_spatial_fourier_modes()  # 1 / Mpc
+        self.compute_k_modes()  # 1 / Mpc
         kmag_perp = np.sqrt(self.kx[None, :] ** 2 + self.ky[:, None] ** 2)
 
         # so what we want to do here is bin each frequency chunk into
         # a 1D vector and then ouput kperp_binned vs. k_par
 
         # build the kperp bins if not specified
-        if k_perp_bin is None:
+        if kperp_edges is None:
             kperp_edges = np.histogram_bin_edges(
                 kmag_perp.flatten(),
                 bins=nbins_perp,
@@ -611,23 +526,24 @@ class power_spectrum(object):
                 )
             delta_k = np.diff(kperp_edges).mean()
             k_perp_bin = kperp_edges[:nbins_perp] + (0.5 * delta_k)
-        else:
-            kperp_edges = utils.bin_edges_from_array(k_perp_bin)
-            assert np.size(kperp_edges) == np.size(k_perp_bin) + 1
-        assert np.size(k_perp_bin) > 0, "Error obtaining kperp bins."
-        nbins_perp = np.size(k_perp_bin)
-        # magnitude of kperp modes in box in Mpc-1
 
-        if k_par_bin is None:
+            # magnitude of kperp modes in box in Mpc-1
+        else:
+            k_perp_bin = kperp_edges[:-1] + (0.5*np.diff(kperp_edges))# make this bin centre
+        
+        if kpar_edges is None:
             k_par_bin = np.linspace(
                 2.*self.delta_kz, self.k_par.max()/2., nbins_par
             )
-        assert np.size(k_par_bin) > 0, "Error obtaining/reading kpar bins."
-        nbins_par = np.size(k_par_bin)
-        kpar_edges = utils.bin_edges_from_array(k_par_bin)
+            kpar_edges = utils.bin_edges_from_array(k_par_bin)
+
+
+        else:
+            k_par_bin = kpar_edges[:-1] + (0.5 * np.diff(kpar_edges))
 
         if self.verbose:
             print('Binning data...')
+        
         # histogram in 2D
         # flatten arrays for np.histogram
         kmag_perp_flat = np.reshape(
@@ -639,44 +555,36 @@ class power_spectrum(object):
             ps_data,
             (kmag_perp.size, -1),
             order='C'
-        ).flatten()
+        ).flatten('C')
+
         # get pixel coordinates in Fourier space
-        coords = np.meshgrid(np.abs(self.k_par), kmag_perp_flat)
+        # coords = np.meshgrid(kmag_perp_flat,np.abs(self.k_par))
+        coords = np.meshgrid(np.abs(self.k_par),kmag_perp_flat)
         coords = [coords[0].flatten(), coords[1].flatten()]
+
         # histogram the power spectrum box
         ret = binned_statistic_2d(
-            x=coords[0],
-            y=coords[1],
+            x=coords[0], # k_par
+            y=coords[1], # k_perp
             values=ps_box_flat,
-            bins=[kpar_edges, kperp_edges],
+            bins=[kpar_edges,kperp_edges],
             statistic='mean',
         )
+
         pspec_2D = ret.statistic
         pspec_2D[np.isnan(pspec_2D)] = 0.0
 
-        return k_par_bin, np.asarray(k_perp_bin), pspec_2D
+        return k_par_bin, k_perp_bin, pspec_2D
 
-    # TODO: Change to np.histogram
-    # TODO: Check accuracy and equivalence with compute_1d
-    def compute_1d_from_2d(self, ps_data=None,
-                           kbins=None, nbins=20,
-                           nbins_cyl=50):
+  
+    def compute_1d_from_2d(self, ps_data=None, bin_edges=None, nbins=20,
+                           nbins_cyl=50, pspec_2D=None, k_par_bin = None, k_perp_bin=None,):
         """
         Compute spherical power spectrum of self.data from cylindrical one.
 
         Parameters
         ----------
-            ps_data: array of floats (optional)
-                3D power spectrum of self.data.
-                Can be fed if it has already been computed with
-                self.FFT_crossxx.
-                Default is None.
-            kbins: array or list of floats
-                Spherical k-bins to use.
-                Units should be Mpc-1.
-                All values should be positive.
-                Default is None.
-            nbins: int
+             nbins: int
                 Number of bins to use when building the spherical power
                 spectrum. Set to kbins.size if kbins is fed.
                 Default is 30.
@@ -685,6 +593,23 @@ class power_spectrum(object):
                 cylindrical power spectrum. Increase for precision (can get
                 very slow). Minimum of 30 advised.
                 Default is 50.
+
+            ps_data: array of floats (optional)
+                3D power spectrum of self.data.
+                Can be fed if it has already been computed with
+                self.FFT_crossxx.
+                Default is None.
+            bin_edges: array or list of floats (optional)
+                Spherical k-bin edges to use.
+                Units should be Mpc-1.
+                All values should be positive.
+                Default is None.
+            pspec_2D: 2d array of floats (optional)
+                Cylindrical power spectrum in units of mK2 Mpc^3.
+            k_par_bin: array of floats (optional)
+                k_parallel bins used.
+            k_perp_bin: array of floats (optional)
+                k_perpendicular bins used.
         Returns
         -------
             kbins: array of floats
@@ -695,42 +620,48 @@ class power_spectrum(object):
         """
         # define kperp and kpar bins making sure to include
         # all modes in the box
-        self.compute_spatial_fourier_modes()  # 1 / Mpc
-        kmag_perp = np.sqrt(self.kx[None, :] ** 2 + self.ky[:, None] ** 2)
-        k_perp_bin = np.linspace(
-            kmag_perp.min(),
-            kmag_perp.max(),
-            num=nbins_cyl,
-        )
-        k_par_bin = np.linspace(
-            self.delta_kz,
-            self.k_par.max(),
-            num=nbins_cyl,
-        )
-        k_par_bin, k_perp_bin, pspec_2D = self.compute_2D_pspec(
+
+        if pspec_2D is None:
+
+            self.compute_k_modes()  # 1 / Mpc
+            kmag_perp = np.sqrt(self.kx[None, :] ** 2 + self.ky[:, None] ** 2)
+            k_perp_bin = np.linspace(
+                kmag_perp.min(),
+                kmag_perp.max(),
+                num=nbins_cyl,
+            )
+            k_par_bin = np.linspace(
+                self.delta_kz,
+                self.k_par.max(),
+                num=nbins_cyl,
+            )
+            k_par_bin, k_perp_bin, pspec_2D = self.compute_2D_pspec(
             ps_data,
-            k_par_bin=k_par_bin,
-            k_perp_bin=k_perp_bin,
-        )
+            kperp_edges=k_par_bin,
+            kpar_edges=k_perp_bin,)
+
+            
+        else:
+            if self.verbose:
+                print('Using input 2D power spectrum and kperp/kpar bins...')
+
         k_mag = np.sqrt(k_par_bin[:, None]**2 + k_perp_bin[None, :]**2)
 
+     
         # define the spherical bins and bin edges
-        if kbins is None:
-            kmin = np.min(k_mag) * 2.
-            kmax = np.max(k_mag) / 2.
+        if bin_edges is None:
+            kmin = np.min(k_mag) #* 2.
+            kmax = np.max(k_mag) #/2.
+
+
             bin_edges = np.histogram_bin_edges(
                 np.sort(k_mag.flatten()),
                 bins=nbins,
                 range=(kmin, kmax)
             )
-        else:
-            dk = np.diff(kbins).mean()
-            assert dk > 0
-            bin_edges = utils.bin_edges_from_array(kbins)
-            assert np.size(bin_edges) == np.size(kbins) + 1
-            nbins = kbins.size
-        assert np.size(bin_edges) > 1, "Error obtaining kpar bins."
-
+            
+        print(bin_edges)
+        # bin the 2D power spectrum
         pspec = np.zeros(len(bin_edges) - 1)
         weighted_k = np.zeros(len(bin_edges) - 1)
         for k in range(len(bin_edges) - 1):
@@ -746,8 +677,7 @@ class power_spectrum(object):
 
         return weighted_k, pspec
 
-    # TODO: change to np.histogram
-    def compute_1D_pspec(self, ps_data=None, kbins=None,
+    def compute_1D_pspec(self, ps_data=None, bin_edges=None,
                          dimensionless=False, nbins=30):
         """
         Compute spherical power spectrum of self.data.
@@ -797,9 +727,11 @@ class power_spectrum(object):
                 "Provided ps_data is complex; taking the real part...",
                 stacklevel=2,
             )
+        
         ps_data = np.real(ps_data)
 
-        self.compute_spatial_fourier_modes()
+
+        self.compute_k_modes()
         kmag_3d = np.sqrt(
             self.kx[None, :, None] ** 2
             + self.ky[:, None, None] ** 2
@@ -811,7 +743,7 @@ class power_spectrum(object):
         # together. Literally just treat it like the old 2D case.
 
         # define the spherical bins and bin edges
-        if kbins is None:
+        if bin_edges is None:
             kmin = np.min(kmag_3d) * 2.
             kmax = np.max(kmag_3d) / 2.
             bin_edges = np.histogram_bin_edges(
@@ -819,13 +751,6 @@ class power_spectrum(object):
                 bins=nbins,
                 range=(kmin, kmax)
             )
-        else:
-            dk = np.diff(kbins).mean()
-            assert dk > 0
-            bin_edges = utils.bin_edges_from_array(kbins)
-            nbins = kbins.size
-        assert np.size(bin_edges) > 1, "Error obtaining kpar bins."
-
         # now the pspec is in (kx,ky,kz) so we want to go through each kz
         # fourier mode and collapse the kxky into 1D to get a 2D pspec
         if self.verbose:
@@ -833,17 +758,19 @@ class power_spectrum(object):
         pspec = np.zeros(len(bin_edges) - 1)
         weighted_k = np.zeros(len(bin_edges) - 1)
         for k in range(len(bin_edges) - 1):
-            mask = (bin_edges[k] < kmag_3d) & (kmag_3d <= bin_edges[k + 1])
+            mask = (bin_edges[k] < kmag_3d) & (kmag_3d <= bin_edges[k + 1]) & (kmag_3d != 0)
             if mask.any():
-                pspec[k] = np.mean(ps_data[mask].real)  # [mk^2 Mpc^6]
+                pspec[k] = np.mean(ps_data[mask])  # [mk^2 Mpc^3]
                 weighted_k[k] = np.mean(kmag_3d[mask])
-
         pspec[np.isnan(pspec)] = 0.0
-
         if dimensionless:
-            pspec *= weighted_k**3 / 4.0 / np.pi  # [mk^2]
+            pspec *= weighted_k**3 / (2*np.pi)**2  # [mk^2]
         # Check empty bins
         if np.any(weighted_k == 0.):
             warnings.warn('Some empty k-bins!')
-
+        
+    
         return weighted_k, pspec
+
+
+
