@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
 
 VERSION = '0.0.1'
-DESCRIPTION = "A small package to simulate SKA observations."
-LONG_DESCRIPTION = "A small package to simulate SKA observations with cosmological signal, foregrounds and noise."
+DESCRIPTION = "A small package to simulate LIM observations."
+LONG_DESCRIPTION = "A small package to simulate line intensity mapping observations from an interferometer with cosmological signal, foregrounds, and noise."
 
 setup(
     name="convsn",
@@ -22,7 +22,7 @@ setup(
         "healpy",
         "uvtools"
         ],
-    keywords='ska_simulator',
+    keywords='limstat',
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Cosmologists",

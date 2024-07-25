@@ -4,8 +4,8 @@ import pytest
 import numpy as np
 from astropy import units, cosmology
 
-from ska_simulator.simulations import cosmological_signal
-from ska_simulator.power_spectrum import power_spectrum
+from limstat.simulations import cosmological_signal
+from limstat.power_spectrum import power_spectrum
 
 
 class test_power_spectrum(unittest.TestCase):

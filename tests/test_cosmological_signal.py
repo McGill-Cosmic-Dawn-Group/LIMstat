@@ -4,7 +4,7 @@ import pytest
 import numpy as np
 from astropy import units, cosmology
 
-from ska_simulator.simulations import cosmological_signal
+from limstat.simulations import cosmological_signal
 
 
 class test_cosmological_signal(unittest.TestCase):

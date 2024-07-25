@@ -5,7 +5,7 @@ import pytest
 import numpy as np
 from astropy import units
 
-from ska_simulator.simulations import thermal_noise
+from limstat.simulations import thermal_noise
 
 class test_noise(unittest.TestCase):
     def setUp(self):

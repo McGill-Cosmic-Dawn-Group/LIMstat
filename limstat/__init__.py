@@ -1,5 +1,5 @@
 """
-__init__.py file for ska_simulator
+__init__.py file for limstat
 """
 try:
     from importlib.metadata import version, PackageNotFoundError
@@ -10,7 +10,7 @@ try:
     from ._version import version as __version__
 except ModuleNotFoundError:  # pragma: no cover
     try:
-        __version__ = version("ska_simulator")
+        __version__ = version("limstat")
     except PackageNotFoundError:
         # package is not installed
         __version__ = "unknown"

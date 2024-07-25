@@ -5,7 +5,7 @@ import pytest
 import numpy as np
 from astropy import units
 
-from ska_simulator.simulations import foregrounds
+from limstat.simulations import foregrounds
 
 
 class test_foregrounds(unittest.TestCase):
