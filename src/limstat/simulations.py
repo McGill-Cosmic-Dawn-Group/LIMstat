@@ -853,10 +853,10 @@ class thermal_noise:
 		total_obs_time,
 		collecting_area,
 		integration_time=10.*units.s,
-		uv_map=None,
 		Tsys=None,
 		output_unit=units.Jy/units.beam,
 		beam_area=None,
+		T_rcv=100.*units.K
 	):
 
 		"""Container for thermal noise generator.
@@ -876,10 +876,6 @@ class thermal_noise:
 				Collecting area of a single antenna, in m2.
 			integration_time: float
 				Correlator integration time in sec.
-			uv_map: array
-				uv map calculated from the distribution of antennas
-				and observing time.
-				Default is None. Must provide a uv map to make noise box.
 			Tsys: float or array of floats
 				System temperature in K. Can be either one value, then Tsys
 				will be constant with frequency, or an array of nfreqs values.
@@ -889,6 +885,8 @@ class thermal_noise:
 				Default is Jy/sr.
 			beam_area: astropy Quantity, optional
 				Integral of the peak-normalized synthesized beam.
+			T_rcv: astropy Quantity (temperature), optional
+				Receiver temperature to be used if Tsys is not fed.
 
 		"""
 
@@ -923,8 +921,8 @@ class thermal_noise:
 		)
 
 		if Tsys is None:
-			self.Tsys = 180. * units.K \
-				* (freqs.to(units.MHz).value / 180.)**(-2.6)
+			self.Tsys = T_rcv + 60. * units.K \
+				* (freqs.to(units.MHz).value / 300.)**(-2.55)
 		else:
 			Tsys = utils.check_unit(Tsys, units.K, 'Tsys')
 			if np.size(Tsys) == 1:
@@ -935,9 +933,6 @@ class thermal_noise:
 				else:
 					raise ValueError('Tsys must be either one value '
 									 'or an array of size nfreqs.')
-
-		# assigning the uv map
-		self.uv_map = uv_map
 
 		# output units
 		self.noise_unit = output_unit
@@ -973,7 +968,7 @@ class thermal_noise:
 
 		# compute std for full observation
 		self.std = (
-			2. * constants.k_B.si * self.Tsys
+			np.sqrt(2.) * constants.k_B.si * self.Tsys
 			/ self.collecting_area.si
 			/ np.sqrt(self.nb_baselines)
 			/ np.sqrt(self.total_obs_time.si * self.freq_res.si)
@@ -987,58 +982,79 @@ class thermal_noise:
 		) * self.noise_unit
 
 
-	def make_noise_box(self, uv_map=None):
+	def make_noise_box(self, uv_map=None, daily_obs_time=4.*units.hr):
+
+		"""Make noise box given uv sampling.
+
+		Parameters
+		----------
+			uv_map: array
+				uv map calculated from the distribution of antennas
+				and observing time over a day.
+				Default is None: equal uv sampling of each point.
+			daily_obs_time: astropy Quantity in time
+				Daily observation time, in hours.
+				Default is 4 hours.
+
+		Returns
+		-------
+			noise: array of floats
+				Noise simulation of dimension
+				(self.npix, self.npix, self.nfreqs).
+		"""
+
+		daily_obs_time = utils.check_unit(
+			daily_obs_time,
+			units.hr,
+			'daily observing time'
+		)
+		nobs_daily = int(daily_obs_time.si / self.integration_time.si)
 
 		# check for uv map and define the variable
-		if (uv_map is None) and (self.uv_map is None):
+		if uv_map is None:
 			warnings.warn('No uv map provided. Setting uv_map to 1s.')
-			uvmap = np.ones((self.npix, self.npix, self.nfreqs))
-		elif uv_map is None:
-			uvmap = self.uv_map
+			uvmap = np.ones((self.npix, self.npix, self.nfreqs)) / nobs_daily
 		else:
-			uvmap = uv_map
+			uvmap = np.copy(uv_map)
+		# check the dimensions
+		assert uvmap.shape == (self.npix, self.npix,self.nfreqs), \
+			'Your uv map has the wrong shape, should be ({}, {}, {}).'.format(self.npix, 
+																			  self.npix, 
+																			  self.nfreqs)
+		# each point covered must be sampled at least once per day
+		assert np.isclose(np.min(uvmap[uvmap>0]) * nobs_daily, 1.), \
+			"uv map incompatible with daily observation time."
+
+		# rescale uv map for full observing season
+		# uvmap * ndays * nobs_daily
+		uvmap *= (self.total_obs_time.si / self.integration_time.si)
 
 		# get std in Jy/beam to avoid losing frequency dependence
-		std_Jy = self.std.to(units.Jy/units.beam, 
+		std_Jy = self.std_per_vis.to(units.Jy/units.beam, 
 									equivalencies=self.Jy_to_K)
 		
 		# simulate real component of noise
 		noise_real = np.random.normal(
 			0,
-			std_Jy.value/np.sqrt(2),
+			std_Jy.value*np.sqrt(.5),
 			size=(self.npix, self.npix, self.nfreqs))
 		
 		# simulate imaginary component of noise
 		noise_imag = np.random.normal(
 			0,
-			std_Jy.value/np.sqrt(2),
+			std_Jy.value*np.sqrt(.5),
 			size=(self.npix, self.npix, self.nfreqs))
 		
 		# making complex noise variable
 		noise_ft = noise_real + 1j*noise_imag
 		
-		# check the dimensions
-		assert uvmap.shape == noise_ft.shape, \
-			'Your uv map has the wrong shape. It should should have the shape ({}, {}, {}).'.format(self.npix, 
-																									self.npix, 
-																									self.nfreqs)
 		# apply the uv map
 		# TO DO -- what happens at points where uv_map = 0?
 		noise_ft = np.divide(noise_ft, np.sqrt(uvmap), where=uvmap != 0.)
 		noise_ft[uvmap==0.] = 0.
 
 		# inverse fourier transform
-		noise = np.fft.fftshift(
-					np.fft.ifftn(
-						np.fft.ifftshift(noise_ft),
-						norm='forward',  # forward removes any normalization in ifft
-						axes=(0, 1)
-					)
-				).real
-		
-		# normalization
-		noise /= np.sqrt(noise.size)
-		noise *= std_Jy.unit
+		noise = np.fft.ifftn(noise_ft, axes=(0, 1)).real * std_Jy.unit
 		
 		return noise.to(self.noise_unit, equivalencies=self.Jy_to_K)
 

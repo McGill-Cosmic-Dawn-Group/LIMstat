@@ -1,0 +1,41 @@
+Metadata-Version: 2.1
+Name: limstat
+Version: 0.0.1
+Summary: A package to simulate LIM observations
+Home-page: https://github.com/McGill-Cosmic-Dawn-Group/LIMstat/
+Author: Rebecca Ceppas de Castro, Hannah Fronenberg, Adelie Gorce, Adrian Liu, Lisa McBride, Bobby Pascua
+License: BSD
+Platform: OSX
+Platform: Linux
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Natural Language :: English
+Classifier: Topic :: Scientific/Engineering :: Physics
+Classifier: Topic :: Scientific/Engineering :: Astronomy
+Requires-Python: >=3.8
+Description-Content-Type: text/x-rst; charset=UTF-8
+License-File: LICENSE
+Requires-Dist: setuptools>=61.0
+Requires-Dist: astropy
+Requires-Dist: numpy
+Requires-Dist: cached_property
+Requires-Dist: scipy
+Requires-Dist: healpy
+Requires-Dist: uvtools
+Provides-Extra: docs
+Requires-Dist: sphinx==5.3.0; extra == "docs"
+Requires-Dist: sphinx_rtd_theme==1.1.1; extra == "docs"
+Requires-Dist: readthedocs-sphinx-search==0.1.1; extra == "docs"
+Requires-Dist: nbsphinx; extra == "docs"
+Requires-Dist: ipython; extra == "docs"
+Requires-Dist: sphinx_autorun; extra == "docs"
+Requires-Dist: numpydoc>=0.8; extra == "docs"
+Requires-Dist: nbsphinx; extra == "docs"
+Requires-Dist: mock==1.0.1; extra == "docs"
+Provides-Extra: tests
+Requires-Dist: pytest>=3.5.1; extra == "tests"
+Provides-Extra: dev
+Requires-Dist: limstat[doc,tests]; extra == "dev"
+Requires-Dist: limstat[tests]; extra == "dev"
