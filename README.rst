@@ -49,6 +49,7 @@ dependencies manually to avoid them being installed automatically by
 ``pip``:
 
 ::
+
    $ conda install -c conda-forge numpy astropy cached_property scipy healpy uvtools matplotlib deprecated
 
 
