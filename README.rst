@@ -1,14 +1,13 @@
 ***************************************
-``limstat``: LIM observation simulator
+``limstat``: A statistical framework for the simulation and analysis of line intensity maps.
 ***************************************
 
 The ``limstat`` package provides all of the tools and data structures
-required to simulate interferometric line-intensity mapping observations,
-including cosmological signal, noise, foregrounds, and telescope effects.
-It can 2D and 3D maps (coeval cubes), as well as compute spherical and
-cylindrical power spectra and associated window functions.
+required to simulate both interferometric and single dish line intensity mapping (LIM) observations. This flexible package allows for the simulation of the cosmological signal, instrumental noise, foreground contaminants, and instrumental effects (e.g. beam convolution).
+The data can be redered as 2D or 3D maps (coeval cubes). This simulated data can be analyzed using spherical or cylindrical power spectra and in the presence of instrumental effects, the associated power spectrum window functions can be computed.
 
-For usage examples and documentation, see ReadTheDocsTBD.
+
+For usage examples (still under construction!) and documentation (also under construction!), see ReadTheDocsTBD.
 
 .. inclusion-marker-installation-do-not-remove
 
