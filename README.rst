@@ -1,5 +1,5 @@
 ***************************************
-``limstat``: A statistical framework for the simulation and analysis of line intensity maps.
+``limstat``: A statistical framework for the simulation and analysis of line intensity maps
 ***************************************
 
 The ``limstat`` package provides all of the tools and data structures
