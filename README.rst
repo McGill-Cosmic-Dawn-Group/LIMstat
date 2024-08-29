@@ -7,7 +7,7 @@ required to simulate both interferometric and single dish line intensity mapping
 The data can be redered as 2D or 3D maps (coeval cubes). This simulated data can be analyzed using spherical or cylindrical power spectra and in the presence of instrumental effects, the associated power spectrum window functions can be computed.
 
 
-For usage examples (still under construction!) and documentation (also under construction!), see ReadTheDocsTBD.
+For usage examples and documentation, see ReadTheDocsTBD (under construction!).
 
 .. inclusion-marker-installation-do-not-remove
 
