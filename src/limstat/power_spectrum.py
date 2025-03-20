@@ -19,7 +19,6 @@ class power_spectrum(object):
         self,
         data,
         cosmo_units, 
-        freqs,
         data2=None,
         freq_taper=None, 
         space_taper=None, 
@@ -90,7 +89,7 @@ class power_spectrum(object):
 
 
         self.freqs = utils.comply_units(
-                value=freqs,
+                value=cosmo_units.freqs,
                 default_unit=units.MHz,
                 quantity="freqs",
                 desired_unit=units.Hz,
