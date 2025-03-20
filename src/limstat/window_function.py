@@ -31,15 +31,16 @@ class window_function(object):
 
 	"""
 	
-	def __init__(self, 
-		  		PSF,
-				cosmo_units,
-				PSF_2 = None,
-				freq_taper=None, 
-				space_taper=None, 
-				freq_taper_kwargs=None, 
-				space_taper_kwargs=None, 
-				verbose = False,
+	def __init__(
+		self, 
+  		PSF,
+		cosmo_units,
+		PSF_2 = None,
+		freq_taper=None, 
+		space_taper=None, 
+		freq_taper_kwargs=None, 
+		space_taper_kwargs=None, 
+		verbose = False,
 	):
 		
 		"""
@@ -117,7 +118,11 @@ class window_function(object):
 		# raise warning that sky 
 			warnings.warn("Only frequency tapering is permitted. Sky tapering is not yet implemented. Please set sky_taper to None.")
 
-		print('Window function class initialised.')
+		self.W_kperp_kkz = None
+		self.Wpar_kperp_kz = None
+
+		if verbose:
+			print('Window function class initialised.')
 
 
 	def _parse_taper_info(self,
@@ -441,9 +446,10 @@ class window_function(object):
 			The 1D window functions.
 
 		"""
-		self.build_Wkper_kkz()
-
-
+		k = np.atleast_1d(k)
+		k_prime = np.atleast_1d(k_prime)
+		if self.W_kperp_kkz is None:
+			self.build_Wkper_kkz()
 
 		nperp = self.W_kperp_kkz.shape[0]
 		npar = self.W_kperp_kkz.shape[1]
@@ -471,15 +477,89 @@ class window_function(object):
 						continue
 			
 					self.W_k_kprime[idx_1, idx_2] += self.W_kperp_kkz[i,j,l].real
-		if norm:
-			N = np.sum(self.W_k_kprime, axis = 1) 
-			N *= np.diff(k_prime)[0]
-			self.W_k_kprime = self.W_k_kprime/N[:,None]
-			# W_k_kprime now has units of Mpc
 
 		if smoothing:
 			self.W_k_kprime = gaussian_filter1d(self.W_k_kprime, sigma = sigma, axis = 1)
-		
+
+		if norm:
+			# N = np.sum(self.W_k_kprime, axis = 1) 
+			# N *= np.diff(k_prime)[0]
+			# self.W_k_kprime = self.W_k_kprime/N[:,None]
+			# W_k_kprime now has units of Mpc
+			sum_per_bin = np.sum(self.W_k_kprime, axis=0)[None, :]
+			self.W_k_kprime  = np.divide(self.W_k_kprime , sum_per_bin, where=sum_per_bin != 0)
+
 		#remove the garbage bin
 		return k_prime, self.W_k_kprime[1:,:]
+	
+
+
+	def compute_2D_window(self, kperp, kpar, k_prime, *args,norm = True, smoothing = False, sigma = 1, **kwargs):
+
+		"""
+		Compute the 1D window function in k_perp and k_parallel directions. 
+
+		Parameters
+		----------
+		k : array_like
+			k bins for which you want to calculate the window functions.
+		k_prime : array_like
+			k grid for which you want to calculate the window functions.
+		*args : list
+		norm : bool, optional
+			Normalize the window function. Default is True.
+		smoothing : bool, optional
+			Apply a Gaussian smoothing to the window function. Default is False.
+		sigma : float, optional
+			The standard deviation of the Gaussian smoothing kernel. Default is 1.
+		**kwargs : dict
+			Additional keyword arguments to pass to the Gaussian smoothing function.
+
+		Returns
+		-------
+		W_k_kprime : array_like
+			The 1D window functions.
+
+		"""
+		if self.W_kperp_kkz is None:
+			self.build_Wkper_kkz()
+
+		k_prime = np.atleast_1d(k_prime)
+		kperp = np.atleast_1d(kperp)
+		kpar = np.atleast_1d(kpar)
+
+		### warnings.filterwarnings("This only works for evenly linearly spaced k bins")
+
+		#make this len(k_edges) and have the 0 row be the garbage bin
+		cyl_wf = np.zeros((kperp.size, kpar.size, k_prime.size))
+
+		for i in tqdm(range(self.kperp_bin.size)):
+			# check with k bin it falls into
+			idx_1 = np.digitize(np.linalg.norm(self.kperp_bin[i]), kperp)
+			if idx_1 >= len(kperp):
+				continue	
+			for j in range(self.k_par_long.size):
+				# check with k bin it falls into
+				idx_2 = np.digitize(np.abs(self.k_par_long[j]), kpar)
+				if idx_2 >= len(kpar):
+					continue	
+				for l in range(self.k_par_long.size):
+					k_prime_mag = np.sqrt(self.kperp_bin[i]**2 + self.k_par_long[l]**2)
+					idx_3 = np.digitize(k_prime_mag, k_prime)
+					if idx_3 >= len(k_prime):
+						continue
+					cyl_wf[idx_1, idx_2, idx_3] += self.W_kperp_kkz[i,j,l].real
+		if norm:
+			# N = np.sum(cyl_wf, axis=0) * np.diff(kperp)[0]
+			# N = np.sum(N, axis=0) * np.diff(kpar)[0]
+			# cyl_wf = cyl_wf/N[:,None]
+			# W now has units of Mpc
+			sum_per_bin = np.sum(cyl_wf, axis=(0, 1))[None, None, :]
+			cyl_wf = np.divide(cyl_wf, sum_per_bin, where=sum_per_bin != 0)
+
+		if smoothing:
+			cyl_wf = gaussian_filter1d(cyl_wf, sigma = sigma, axis = 1)
+		
+		#remove the garbage bin
+		return cyl_wf
 	
