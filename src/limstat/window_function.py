@@ -192,8 +192,6 @@ class window_function(object):
 
 		"""
 		# compute the Gtilde matrix
-		if self.verbose:
-			print('Gtilde matrix computed.')
 		x = np.fft.fftshift(np.fft.fftfreq(self.PSF.shape[0], d = 1/(self.theta_x)))
 		y = np.fft.fftshift(np.fft.fftfreq(self.PSF.shape[0], d = 1/(self.theta_y)))
 
@@ -206,8 +204,7 @@ class window_function(object):
 
 			return self.Gtilde, self.Gtilde_2
 		else:
-			self.Gtilde = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(self.PSF*self.taper,axes = (0,1)), axes = (0,1)), axes = (0,1))*dx*dy
-			
+			self.Gtilde = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(self.PSF*self.taper,axes = (0,1)), axes = (0,1)), axes = (0,1))*dx*dy			
 			
 			return self.Gtilde
 
@@ -275,7 +272,7 @@ class window_function(object):
 	
 
 	
-	def bin_Gtilde_kperp(self, PSF_UV, kperp_cutoff = None):
+	def bin_Gtilde_kperp(self, PSF_UV, kperp_cutoff=None, kpar_cutoff=None):
 
 		"""
 		Bin the Gtilde matrix in k_perp and k_parallel. 
@@ -286,16 +283,22 @@ class window_function(object):
 		kmag_perp = np.sqrt(self.kx[None, :] ** 2 + self.ky[:, None] ** 2)
 
 		#TODO: make this random 95 more general. Is there a rule for how fine you can bin this without gaps? 
+		dkperp = np.diff(self.kx)[0]
 		if kperp_cutoff is not None:
-			self.kperp_bin = np.linspace((np.min(kmag_perp)),kperp_cutoff,95)
+			# self.kperp_bin = np.linspace((np.min(kmag_perp)),kperp_cutoff, 95)
+			kperp_bin_edges = np.arange(np.min(kmag_perp)-dkperp, kperp_cutoff+dkperp, step=2*dkperp)
 		else:
-			self.kperp_bin = np.linspace((np.min(kmag_perp)),(np.max(kmag_perp)),95)
-
+			# self.kperp_bin = np.linspace((np.min(kmag_perp)),(np.max(kmag_perp)),95)
+			kperp_bin_edges = np.arange(np.min(kmag_perp)-dkperp, np.max(kmag_perp)+dkperp, step=2*dkperp)
+		self.kperp_bin = (kperp_bin_edges[1:]+kperp_bin_edges[:-1])/2.
+		if (self.kperp_bin.size > 100) or (self.kperp_bin.size < 10):
+			print(f'Warning: kperp_bin has dim {self.kperp_bin.size})!')
 
 		kpar_bin = self.k_par + np.diff(self.k_par)[0]/2
 		#add one value to the beginning of k_par_bin
 		kpar_bin = np.insert(kpar_bin,0,self.k_par[0] - np.diff(self.k_par)[0]/2)
-
+		if kpar_cutoff is not None:
+			kpar_bin = kpar_bin[kpar_bin<=kpar_cutoff]
 
 		kmag_perp_flat = np.reshape(
 					kmag_perp,
@@ -318,7 +321,7 @@ class window_function(object):
 			x=coords[0], # k_par
 			y=coords[1], # k_perp
 			values=gauss_fft_flat.real,
-			bins=[kpar_bin,self.kperp_bin],
+			bins=[kpar_bin,kperp_bin_edges],
 			statistic='mean',
 		)
 
@@ -327,7 +330,7 @@ class window_function(object):
 			x=coords[0], # k_par
 			y=coords[1], # k_perp
 			values=gauss_fft_flat.imag,
-			bins=[kpar_bin,self.kperp_bin],
+			bins=[kpar_bin,kperp_bin_edges],
 			statistic='mean',
 		)
 
@@ -337,17 +340,19 @@ class window_function(object):
 
 
 	
-	def padding_Gtilde(self):
+	def padding_Gtilde(self, kperp_cutoff=None, kpar_cutoff=None):
 
 		"""
 		Pad the Gtilde matrix with zeros to expand the Fourier grid in the k_parallel direction. 
 
 		"""
 		self.compute_Gtilde()
+		if self.verbose:
+			print('Gtilde matrix computed.')
 
 		if self.PSF_2 is not None:
-			G_tilde_binned = self.bin_Gtilde_kperp(self.Gtilde, kperp_cutoff = None)
-			G_tilde_2_binned =self.bin_Gtilde_kperp(self.Gtilde_2, kperp_cutoff = None)
+			G_tilde_binned = self.bin_Gtilde_kperp(self.Gtilde, kperp_cutoff=kperp_cutoff, kpar_cutoff=kpar_cutoff)
+			G_tilde_2_binned =self.bin_Gtilde_kperp(self.Gtilde_2, kperp_cutoff=kperp_cutoff, kpar_cutoff=kpar_cutoff)
 
 			self.Gtilde_pad = np.pad(G_tilde_binned, ((self.z_npix, self.z_npix), (0,0)), mode = 'constant', constant_values = 0)
 			self.Gtilde_2_pad = np.pad(G_tilde_2_binned, ((self.z_npix, self.z_npix), (0,0)), mode = 'constant', constant_values = 0)
@@ -355,18 +360,19 @@ class window_function(object):
 			return self.Gtilde_pad, self.Gtilde_2_pad
 
 		else:
-			G_tilde_binned = self.bin_Gtilde_kperp(self.Gtilde, kperp_cutoff = None)
-			
+			G_tilde_binned = self.bin_Gtilde_kperp(self.Gtilde, kperp_cutoff=kperp_cutoff, kpar_cutoff=kpar_cutoff)
 			self.Gtilde_pad = np.pad(G_tilde_binned, ((self.z_npix, self.z_npix), (0,0)), mode = 'constant', constant_values = 0)
 			return self.Gtilde_pad
 	
-	def compute_Wpar(self):
+	def compute_Wpar(self, kperp_cutoff=None, kpar_cutoff=None):
 		
 		"""
 		Compute the window function in the parallel direction. 
 
 		"""
-		self.padding_Gtilde()
+		self.padding_Gtilde(kperp_cutoff=kperp_cutoff, kpar_cutoff=kpar_cutoff)
+		if self.verbose:
+			print('Gtilde matrix padded.')
 
 		taper_norm = 1
 		if isinstance(self.taper, np.ndarray):
@@ -392,10 +398,8 @@ class window_function(object):
 
 			self.Wpar_kperp_kz = ((F_par*np.conj(F_par))/taper_norm).T
 			return self.Wpar_kperp_kz.real
-		
 
-	
-	def build_Wkper_kkz(self):
+	def build_Wkper_kkz(self, kperp_cutoff=None):
 
 
 		"""
@@ -403,10 +407,9 @@ class window_function(object):
 
 		"""
 		if self.Wpar_kperp_kz is None:
-			self.compute_Wpar()
+			self.compute_Wpar(kperp_cutoff=kperp_cutoff)
 		nperp = self.Wpar_kperp_kz.shape[0]
 		npar = self.Wpar_kperp_kz.shape[1]
-
 
 		self.W_kperp_kkz = np.zeros((nperp,npar,npar), dtype = complex)
 		# Eq. B22 of Fronenberg+2024
@@ -417,8 +420,7 @@ class window_function(object):
 					if idx < 0 or idx >= npar:
 						continue
 					self.W_kperp_kkz[i,j,k] = self.Wpar_kperp_kz[i,idx]
-	
-	
+
 	def compute_1D_window(self,k, k_prime, *args,norm = True, smoothing = False, sigma = 1, **kwargs):
 
 		"""
@@ -449,7 +451,7 @@ class window_function(object):
 		k = np.atleast_1d(k)
 		k_prime = np.atleast_1d(k_prime)
 		if self.W_kperp_kkz is None:
-			self.build_Wkper_kkz()
+			self.build_Wkper_kkz(*args)
 
 		nperp = self.W_kperp_kkz.shape[0]
 		npar = self.W_kperp_kkz.shape[1]
@@ -493,8 +495,6 @@ class window_function(object):
 
 		#remove the garbage bin
 		return k_prime, self.W_k_kprime[1:,:]
-	
-
 
 	def compute_cyl2sph_window(self, kperp, kpar, k_prime, *args,norm = True, smoothing = False, sigma = 1, **kwargs):
 
@@ -565,8 +565,7 @@ class window_function(object):
 			cyl_wf[~m] = 0.
 			cyl_wf[m] = cyl_wf[m]/sum_per_bin[None, None, m]
 		
-		return cyl_wf
-	
+		return cyl_wf	
 
 	def compute_2D_window(self, kperp, kpar, *args,norm = True, smoothing = False, sigma = 1, **kwargs):
 
@@ -597,7 +596,6 @@ class window_function(object):
 		"""
 		if self.W_kperp_kkz is None:
 			self.build_Wkper_kkz()
-		arr = np.copy(np.abs(self.W_kperp_kkz))
 
 		kperp = np.atleast_1d(kperp)
 		kpar = np.atleast_1d(kpar)
@@ -621,7 +619,7 @@ class window_function(object):
 					idx_3 = np.digitize(np.abs(self.k_par_long[l]), kpar)
 					if idx_3 >= len(kpar):
 						continue
-					cyl_wf[idx_1, idx_2, idx_3] += arr[i,j,l]
+					cyl_wf[idx_1, idx_2, idx_3] += np.abs(self.W_kperp_kkz[i,j,l])
 		if norm:
 			# N = np.sum(cyl_wf, axis=0) * np.diff(kperp)[0]
 			# N = np.sum(N, axis=0) * np.diff(kpar)[0]
