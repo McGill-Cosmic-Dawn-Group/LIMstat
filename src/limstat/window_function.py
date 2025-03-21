@@ -402,13 +402,14 @@ class window_function(object):
 		Build the window function in the k_perp and k_parallel directions. 
 
 		"""
-		self.compute_Wpar()
+		if self.Wpar_kperp_kz is None:
+			self.compute_Wpar()
 		nperp = self.Wpar_kperp_kz.shape[0]
 		npar = self.Wpar_kperp_kz.shape[1]
 
 
 		self.W_kperp_kkz = np.zeros((nperp,npar,npar), dtype = complex)
-
+		# Eq. B22 of Fronenberg+2024
 		for i in tqdm(range(nperp)):
 			for j in range(npar):
 				for k in range(npar):
@@ -416,7 +417,6 @@ class window_function(object):
 					if idx < 0 or idx >= npar:
 						continue
 					self.W_kperp_kkz[i,j,k] = self.Wpar_kperp_kz[i,idx]
-	
 	
 	
 	def compute_1D_window(self,k, k_prime, *args,norm = True, smoothing = False, sigma = 1, **kwargs):
@@ -486,15 +486,17 @@ class window_function(object):
 			# N *= np.diff(k_prime)[0]
 			# self.W_k_kprime = self.W_k_kprime/N[:,None]
 			# W_k_kprime now has units of Mpc
-			sum_per_bin = np.sum(self.W_k_kprime, axis=0)[None, :]
-			self.W_k_kprime  = np.divide(self.W_k_kprime , sum_per_bin, where=sum_per_bin != 0)
+			sum_per_bin = np.sum(self.W_k_kprime, axis=1)
+			m = sum_per_bin != 0
+			self.W_k_kprime[m] = self.W_k_kprime[m]/sum_per_bin[m, None]
+			self.W_k_kprime[~m] = 0.
 
 		#remove the garbage bin
 		return k_prime, self.W_k_kprime[1:,:]
 	
 
 
-	def compute_2D_window(self, kperp, kpar, k_prime, *args,norm = True, smoothing = False, sigma = 1, **kwargs):
+	def compute_cyl2sph_window(self, kperp, kpar, k_prime, *args,norm = True, smoothing = False, sigma = 1, **kwargs):
 
 		"""
 		Compute the 1D window function in k_perp and k_parallel directions. 
@@ -549,13 +551,85 @@ class window_function(object):
 					if idx_3 >= len(k_prime):
 						continue
 					cyl_wf[idx_1, idx_2, idx_3] += self.W_kperp_kkz[i,j,l].real
+
+		if smoothing:
+			cyl_wf = gaussian_filter1d(cyl_wf, sigma = sigma, axis = 1)
+
 		if norm:
 			# N = np.sum(cyl_wf, axis=0) * np.diff(kperp)[0]
 			# N = np.sum(N, axis=0) * np.diff(kpar)[0]
 			# cyl_wf = cyl_wf/N[:,None]
 			# W now has units of Mpc
-			sum_per_bin = np.sum(cyl_wf, axis=(0, 1))[None, None, :]
-			cyl_wf = np.divide(cyl_wf, sum_per_bin, where=sum_per_bin != 0)
+			sum_per_bin = np.sum(cyl_wf, axis=(0, 1))
+			m = sum_per_bin != 0
+			cyl_wf[~m] = 0.
+			cyl_wf[m] = cyl_wf[m]/sum_per_bin[None, None, m]
+		
+		return cyl_wf
+	
+
+	def compute_2D_window(self, kperp, kpar, *args,norm = True, smoothing = False, sigma = 1, **kwargs):
+
+		"""
+		Compute the 1D window function in k_perp and k_parallel directions. 
+
+		Parameters
+		----------
+		kperp : array_like
+			k_perp bins for which you want to calculate the window functions.
+		kpar : array_like
+			k_parallel bins for which you want to calculate the window functions.
+		*args : list
+		norm : bool, optional
+			Normalize the window function. Default is True.
+		smoothing : bool, optional
+			Apply a Gaussian smoothing to the window function. Default is False.
+		sigma : float, optional
+			The standard deviation of the Gaussian smoothing kernel. Default is 1.
+		**kwargs : dict
+			Additional keyword arguments to pass to the Gaussian smoothing function.
+
+		Returns
+		-------
+		W_k_kprime : array_like
+			The 1D window functions.
+
+		"""
+		if self.W_kperp_kkz is None:
+			self.build_Wkper_kkz()
+		arr = np.copy(np.abs(self.W_kperp_kkz))
+
+		kperp = np.atleast_1d(kperp)
+		kpar = np.atleast_1d(kpar)
+
+		### warnings.filterwarnings("This only works for evenly linearly spaced k bins")
+
+		#make this len(k_edges) and have the 0 row be the garbage bin
+		cyl_wf = np.zeros((kperp.size, kpar.size, kpar.size))
+
+		for i in tqdm(range(self.kperp_bin.size)):
+			# check with k bin it falls into
+			idx_1 = np.digitize(np.linalg.norm(self.kperp_bin[i]), kperp)
+			if idx_1 >= len(kperp):
+				continue	
+			for j in range(self.k_par_long.size):
+				# check with k bin it falls into
+				idx_2 = np.digitize(np.abs(self.k_par_long[j]), kpar)
+				if idx_2 >= len(kpar):
+					continue	
+				for l in range(self.k_par_long.size):
+					idx_3 = np.digitize(np.abs(self.k_par_long[l]), kpar)
+					if idx_3 >= len(kpar):
+						continue
+					cyl_wf[idx_1, idx_2, idx_3] += arr[i,j,l]
+		if norm:
+			# N = np.sum(cyl_wf, axis=0) * np.diff(kperp)[0]
+			# N = np.sum(N, axis=0) * np.diff(kpar)[0]
+			sum_per_bin = np.sum(cyl_wf, axis=2)
+			m = sum_per_bin != 0
+			cyl_wf[~m] = 0.
+			cyl_wf[m] = cyl_wf[m]/sum_per_bin[m, None]
+			# W now has units of Mpc
 
 		if smoothing:
 			cyl_wf = gaussian_filter1d(cyl_wf, sigma = sigma, axis = 1)
