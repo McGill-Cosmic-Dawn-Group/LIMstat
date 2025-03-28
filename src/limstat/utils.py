@@ -1,6 +1,7 @@
 import numpy as np
 import warnings
 from astropy import units
+from . import utils
 
 
 class constants:
