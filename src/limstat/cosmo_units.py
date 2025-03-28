@@ -102,11 +102,11 @@ class cosmo_units(object):
             self.delta_thetax = self.theta_x / self.x_npix
             self.delta_freq = np.diff(self.freqs).mean()
 
-            self.dRpara_dnu = (constants.c * (1 + self.z)**2/ (self.cosmo.H(self.z) * self.rest_freq)).to("Mpc")
+            self.dRpara_dnu = (constants.c * (1 + self.z)**2/ (self.cosmo.H(self.z).si * self.rest_freq)).to("Mpc/Hz")
             self.dRperp_dtheta = self.cosmo.comoving_distance(self.z).to(units.Mpc)
 
-            self.Lx = self.theta_x * self.dRperp_dtheta
-            self.Ly = self.theta_y * self.dRperp_dtheta
+            self.Lx = self.theta_x * self.dRperp_dtheta.value
+            self.Ly = self.theta_y * self.dRperp_dtheta.value
             self.Lz = (max(self.freqs) - min(self.freqs)) *  self.dRpara_dnu
         else:
             self.Lx = Lx

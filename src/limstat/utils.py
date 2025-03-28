@@ -199,7 +199,7 @@ def comply_units(
         equivalencies = equivalencies or []
         value = value.to(desired_unit, equivalencies=equivalencies)
 
-    return value.value
+    return value
 
 
 def powerlaw(a, b, idx, size=1):
