@@ -282,7 +282,6 @@ def f2z(f, rest_freq=constants.f21):
     )
     return (rest_freq / f) - 1.
 
-
 def z2f(z, rest_freq=constants.f21, unit='MHz'):
     """
     Converts a redshift into a frequency for a given rest-frame frequency.
@@ -313,3 +312,77 @@ def z2f(z, rest_freq=constants.f21, unit='MHz'):
     )
 
     return rest_freq / (1. + z)
+
+
+def cyl_to_sph(cyl_ps, kperp_bins, kpara_bins, kbins=None, nbins=None):
+    """
+    Compute spherical power spectrum from cylindrical one.
+
+    Parameters
+    ----------
+        ps_data: 2D array of floats
+            2D cylindrical power spectrum.
+        kperp_bins: array of floats
+            kperp cylindrical bins used to obtain
+            ps_data.
+        kpara_bins: array of floats
+            kpara cylindrical bins used to obtain
+            ps_data.
+        kbins: array or list of floats
+            Spherical k-bins to use.
+            Units should be Mpc-1.
+            All values should be positive.
+            Default is None.
+        nbins: int
+            Number of bins to use when building the spherical power
+            spectrum. Set to kbins.size if kbins is fed.
+            Default is 30.
+    Returns
+    -------
+        kbins: array of floats
+            Spherical k-bins used, weighted by cell population.
+        pspec: array of floats
+            Spherical power spectrum in units of mK2 Mpc^3.
+
+    """
+    # check dimensions
+    assert np.shape(cyl_ps) == (kperp_bins.size, kpara_bins.size), \
+        "Shapes of ps_data and of kperp and kpara bins do not match."
+
+    k_mag = np.sqrt(kperp_bins[:, None]**2 + kpara_bins[None, :]**2)
+
+    # define the spherical bins and bin edges
+    if kbins is None:
+        if nbins is None:
+            nbins = 10
+        else:
+            nbins = int(nbins)
+        kmin = np.min(k_mag) * 2.
+        kmax = np.max(k_mag) / 2.
+        bin_edges = np.histogram_bin_edges(
+            np.sort(k_mag.flatten()),
+            bins=nbins,
+            range=(kmin, kmax)
+        )
+    else:
+        dk = np.diff(kbins).mean()
+        assert dk > 0
+        bin_edges = utils.bin_edges_from_array(kbins)
+        assert np.size(bin_edges) == np.size(kbins) + 1
+        nbins = kbins.size
+    assert np.size(bin_edges) > 1, "Error obtaining kpar bins."
+
+    pspec = np.zeros(len(bin_edges) - 1)
+    weighted_k = np.zeros(len(bin_edges) - 1)
+    for k in range(len(bin_edges) - 1):
+        mask = (bin_edges[k] < k_mag) & (k_mag <= bin_edges[k + 1])
+        if mask.any():
+            pspec[k] = np.mean(cyl_ps[mask].real)  # [mk^2 Mpc^3]
+            weighted_k[k] = np.mean(k_mag[mask])
+    # Make sure there are no nans! If there are make them zeros.
+    pspec[np.isnan(pspec)] = 0.0
+    # Check empty bins
+    if np.any(weighted_k == 0.):
+        print('Some empty k-bins!')
+
+    return weighted_k, pspec
