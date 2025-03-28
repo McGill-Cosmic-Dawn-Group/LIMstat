@@ -85,8 +85,6 @@ class power_spectrum(object):
 
         self.volume_element = cosmo_units.volume_element.value
         self.cosmo_volume = cosmo_units.cosmo_volume.value
-        
-
 
         self.freqs = utils.comply_units(
                 value=cosmo_units.freqs,
@@ -111,7 +109,7 @@ class power_spectrum(object):
                 default_unit=units.sr,
                 quantity="beam_area",
                 desired_unit=units.sr,
-            ) * units.sr
+            )
         elif convert_data_to is not None:
             if ((data.unit.is_equivalent(units.mK) and
                convert_data_to.is_equivalent(units.Jy/units.beam)) or
@@ -124,7 +122,7 @@ class power_spectrum(object):
         #TODO: Need to fix this unit conversion stuff!!
 
         self.Jy_to_K = units.brightness_temperature(
-            self.freqs*units.Hz, beam_area
+            self.freqs, beam_area
         )
 
         if convert_data_to is None and hasattr(data, "unit"):
@@ -143,7 +141,7 @@ class power_spectrum(object):
             quantity="data",
             desired_unit=convert_data_to,
             equivalencies=self.Jy_to_K,
-        )
+        ).value
 
         if np.any(self.data.imag):
             warnings.warn(
@@ -154,8 +152,6 @@ class power_spectrum(object):
 
         # self.data_unit = data.unit
         self.pk_unit = self.data_unit**2 * units.Mpc ** 3
-
-        
 
         # define Fourier axes
         # self.compute_eta_nu()
@@ -186,7 +182,7 @@ class power_spectrum(object):
                 quantity="data2",
                 desired_unit=convert_data_to,
                 equivalencies=self.Jy_to_K,
-            )
+            ).value
             if np.any(self.data2.imag):
                 warnings.warn(
                     "Provided data2 is complex; taking the real part...",
@@ -219,7 +215,6 @@ class power_spectrum(object):
         else:
             self.PSF = None
             self.norm_map = np.ones((self.x_npix, self.y_npix))
-       
 
 
     def take_ft(self, data, axes=None):
