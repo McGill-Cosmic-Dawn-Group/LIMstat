@@ -146,14 +146,14 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
 
     Parameters
     ----------
-        box: 3D array of floats
+        box: 2D or 3D array of floats
             Array containing the lightcone.
             Dimensions (npix, npix, nfreqs).
         fov: float
             Field of view corresponding to the image.
             Must have units.
         ifreq: int
-            Which frequency channel to plot.
+            Which frequency channel to plot if box is 3D.
             Default is None: nfreqs//2.
         label: str
             Label for the colorbar.
@@ -171,12 +171,17 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
 
 
     """
-    
-    if ifreq is None:
-        ifreq = box.shape[-1]//2
+    if box.ndim == 3:
+        if ifreq is None:
+            ifreq = box.shape[-1]//2
+            image = box[:, :, ifreq]
+        else:
+            assert ifreq < box.shape[-1], \
+                "ifreq must be smaller than box.shape[-1]."
+    elif box.ndim == 2:
+        image = np.copy(box)
     else:
-        assert ifreq < box.shape[-1], \
-            "ifreq must be smaller than box.shape[-1]."
+        raise ValueError('box must be of dimension 2 or 3.')
 
     xlin = np.linspace(-fov.to(units.deg).value/2, fov.to(units.deg).value/2, box.shape[0])
     existing_axis = True
@@ -186,7 +191,7 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
 
     im = ax.pcolor(
         xlin, xlin,
-        box[:, :, ifreq],
+        image,
         shading='auto',
         norm=norm,
         cmap=cmap
