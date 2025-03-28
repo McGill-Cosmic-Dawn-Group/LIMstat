@@ -7,7 +7,7 @@ from matplotlib import colors
 def plot_ps2d(
         pspec_2d, kperp_bins, kpara_bins, dimless=False,
         label=r'P($k_\parallel$,$k_\perp$) [(Jy/beam)$^2$ Mpc$^3$]',
-        vmin=None, vmax=None, title=None, cmap='viridis', ax=None,
+        norm=None, title=None, cmap='viridis', ax=None,
     ):
     """
     Method to plot cylindrical power spectrum with logarithmic colorbar.
@@ -31,12 +31,7 @@ def plot_ps2d(
         label: str
             Label for the colorbar.
             Default is P(k) in (Jy/beam)2 Mpc3.
-        vmin: float
-            Minimum value used for the colorbar.
-            Default is None.
-        vmax: float
-            Maximum value used for the colorbar.
-            Default is None.
+        norm: matplotlib.colors.Normalize object.
         title: str
             Title for the axis.
             Default is None.
@@ -75,7 +70,7 @@ def plot_ps2d(
         pspec_2d,
         shading='auto',
         cmap=cmap,
-        norm=colors.LogNorm(vmin=vmin, vmax=vmax)
+        norm=norm,
     )
     if not existing_axis:
         plt.colorbar(im, label=label, ax=ax)
