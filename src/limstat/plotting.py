@@ -144,3 +144,59 @@ def plot_ps1d(pspec_1d, kbins, yerr=None, title=None, dimless=False, ax=None, pl
     ax.set_xlabel(r'$k$ [Mpc$^{-1}]$')
     ax.set_ylabel(ylabel)
 
+def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, norm=None, ax=None):
+    """
+    Method to plot 2D sky map from lightcone.
+
+    Parameters
+    ----------
+        box: 3D array of floats
+            Array containing the lightcone.
+            Dimensions (npix, npix, nfreqs).
+        fov: float
+            Field of view corresponding to the image.
+            Must have units.
+        ifreq: int
+            Which frequency channel to plot.
+            Default is None: nfreqs//2.
+        label: str
+            Label for the colorbar.
+            Default is T [K].
+        title: str
+            Title for the axis.
+            Default is None.
+        cmap: str
+            Matplotlib colormap to use.
+            Default is RdBu_r.
+        norm: matplotlib.colors.Normalize object.
+        ax: matplotlib.axes object
+            Axis to plot the figure on.
+            Default is None (new figure and axis are generated).
+
+
+    """
+    
+    if ifreq is None:
+        ifreq = box.shape[-1]//2
+    else:
+        assert ifreq < box.shape[-1], \
+            "ifreq must be smaller than box.shape[-1]."
+
+    xlin = np.linspace(-fov.to(units.deg).value/2, fov.to(units.deg).value/2, box.shape[0])
+    existing_axis = True
+    if ax is None:
+        fig, ax = plt.subplots(1, 1,)
+        existing_axis = False
+
+    im = ax.pcolor(
+        xlin, xlin,
+        box[:, :, ifreq],
+        shading='auto',
+        norm=norm,
+        cmap=cmap
+    )
+    plt.colorbar(im, label=label, ax=ax)
+    ax.set_ylabel(rf'$\theta$ [{fov.unit}]')
+    ax.set_xlabel(rf'$\theta$ [{fov.unit}]')
+    if title is not None:
+        ax.set_title(title)
