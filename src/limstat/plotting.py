@@ -2,6 +2,7 @@ import numpy as np
 import warnings
 from astropy import units
 import matplotlib.pyplot as plt
+from matplotlib import colors
 
 def plot_ps2d(
         pspec_2d, kperp_bins, kpara_bins, dimless=False,
@@ -200,3 +201,4 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
     ax.set_xlabel(rf'$\theta$ [{fov.unit}]')
     if title is not None:
         ax.set_title(title)
+    
