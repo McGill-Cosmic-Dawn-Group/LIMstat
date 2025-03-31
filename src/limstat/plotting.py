@@ -186,7 +186,18 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
     else:
         raise ValueError('box must be of dimension 2 or 3.')
 
-    xlin = np.linspace(-fov.to(units.deg).value/2, fov.to(units.deg).value/2, box.shape[0])
+    if uv:
+        xlin = np.linspace(
+            -2.*np.pi/(fov.to(units.deg).value/2),
+            2.*np.pi/(fov.to(units.deg).value/2),
+            box.shape[0]
+        )
+    else:
+        xlin = np.linspace(
+            -fov.to(units.deg).value/2,
+            fov.to(units.deg).value/2,
+            box.shape[0]
+        )
     existing_axis = True
     if ax is None:
         fig, ax = plt.subplots(1, 1,)
