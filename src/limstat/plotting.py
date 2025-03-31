@@ -174,10 +174,10 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
     if box.ndim == 3:
         if ifreq is None:
             ifreq = box.shape[-1]//2
-            image = box[:, :, ifreq]
         else:
             assert ifreq < box.shape[-1], \
                 "ifreq must be smaller than box.shape[-1]."
+        image = box[:, :, ifreq]
     elif box.ndim == 2:
         image = np.copy(box)
     else:
