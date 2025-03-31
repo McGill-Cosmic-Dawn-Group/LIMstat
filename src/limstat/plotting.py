@@ -140,7 +140,7 @@ def plot_ps1d(pspec_1d, kbins, yerr=None, title=None, dimless=False, ax=None, pl
     ax.set_xlabel(r'$k$ [Mpc$^{-1}]$')
     ax.set_ylabel(ylabel)
 
-def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, norm=None, ax=None):
+def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, norm=None, ax=None, uv=False):
     """
     Method to plot 2D sky map from lightcone.
 
@@ -168,6 +168,9 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
         ax: matplotlib.axes object
             Axis to plot the figure on.
             Default is None (new figure and axis are generated).
+        uv: boolean
+            Whether you are plotting a (u, v) map or not.
+            Default: False.
 
 
     """
@@ -197,8 +200,12 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
         cmap=cmap
     )
     plt.colorbar(im, label=label, ax=ax)
-    ax.set_ylabel(rf'$\theta$ [{fov.unit}]')
-    ax.set_xlabel(rf'$\theta$ [{fov.unit}]')
+    if uv:
+        ax.set_ylabel(rf'$u$')
+        ax.set_xlabel(rf'$v$')
+    else:
+        ax.set_ylabel(rf'$\theta$ [{fov.unit}]')
+        ax.set_xlabel(rf'$\theta$ [{fov.unit}]')
     if title is not None:
         ax.set_title(title)
     
