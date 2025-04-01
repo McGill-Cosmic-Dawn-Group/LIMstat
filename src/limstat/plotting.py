@@ -61,7 +61,8 @@ def plot_ps2d(
         fig, ax = plt.subplots(1, 1,)
         existing_axis = False
     if dimless:
-        pspec2d *= kperp_bins**2 * kpara_bins *1./2./np.pi**2
+        k = np.sqrt(kperp_bins[None, :]**2 + kpara_bins[:, None]**2)
+        pspec2d *= k**3 *1./2./np.pi**2
         label = r'$\Delta^2(k)$ [K$^2$]'
 
     im = ax.pcolor(
@@ -174,6 +175,7 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
 
 
     """
+    ang_res = fov / box.shape[0]
     if box.ndim == 3:
         if ifreq is None:
             ifreq = box.shape[-1]//2
@@ -188,8 +190,8 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
 
     if uv:
         xlin = np.linspace(
-            -2.*np.pi/(fov.to(units.deg).value/2),
-            2.*np.pi/(fov.to(units.deg).value/2),
+            1.22/fov.to(units.rad).value,
+            1.22/ang_res.to(units.rad).value,
             box.shape[0]
         )
     else:
