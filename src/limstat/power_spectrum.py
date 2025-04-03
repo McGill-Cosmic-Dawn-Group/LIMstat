@@ -1,6 +1,7 @@
 from cached_property import cached_property
 import numpy as np
 from astropy import constants, units, cosmology
+from astropy.cosmology import units as cunits
 import warnings
 from scipy.stats import binned_statistic_2d
 from . import utils
@@ -152,6 +153,8 @@ class power_spectrum(object):
 
         # self.data_unit = data.unit
         self.pk_unit = self.data_unit**2 * units.Mpc ** 3
+        if cosmo_units.little_h:
+            self.pk_unit /= cunits.littleh**3
 
         # define Fourier axes
         # self.compute_eta_nu()
@@ -204,17 +207,18 @@ class power_spectrum(object):
                               stacklevel=2)
                 self.PSF = self.PSF.value
             # normalise
-            rpar = np.arange(0., self.Lz, step=self.delta_z)  # Mpc
-            fft_psf = self.take_ft(self.PSF, axes=(0, 1))
-            # PS normalisation accounting for PSF
-            self.norm_map = np.trapz(np.abs(fft_psf)**2, rpar) / self.Lz  # unit 1
+            fft_psf = np.fft.fftn(
+                self.PSF/np.sum(self.PSF, axis=(0, 1)),
+                axes=(0, 1)
+            ) 
+            self.norm_map = (fft_psf * np.conj(fft_psf)).real
             # self.PSF /= np.sqrt(self.norm_map[..., None])
             if not np.allclose(self.taper, 1.):
                 raise NotImplementedError('PSF-normalisation with tapering '
                                           'not properly implemented yet')
         else:
             self.PSF = None
-            self.norm_map = np.ones((self.x_npix, self.y_npix))
+            self.norm_map = np.ones((self.x_npix, self.y_npix))[..., None]
 
 
     def take_ft(self, data, axes=None):
@@ -240,13 +244,13 @@ class power_spectrum(object):
         if axes is None:
             axes = (0, 1, 2)
 
-        fft_data = np.fft.fftshift(
-            np.fft.fftn(
-                np.fft.ifftshift(data),
-                axes=axes
-            )
-        )
-
+        # fft_data = np.fft.ifftshift(
+        #     np.fft.fftn(
+        #         np.fft.fftshift(data),
+        #         axes=axes
+        #     )
+        # )
+        fft_data = np.fft.fftn(data, axes=axes)
         return fft_data
 
     def take_ift(self, ft_data, axes=None):
@@ -276,12 +280,13 @@ class power_spectrum(object):
             axes = (0, 1, 2)
         axes = np.array(axes)
 
-        data = np.fft.fftshift(
-            np.fft.ifftn(
-                np.fft.ifftshift(ft_data),
-                axes=axes
-            )
-        )
+        # data = np.fft.fftshift(
+        #     np.fft.ifftn(
+        #         np.fft.ifftshift(ft_data),
+        #         axes=axes
+        #     )
+        # )
+        data = np.fft.ifftn(ft_data, axes=axes)
 
         npix = self.x_npix * self.y_npix * self.z_npix
         data *= npix
@@ -312,12 +317,11 @@ class power_spectrum(object):
             if self.theta_x_taper is not None:
                 taper_norm *= np.sum(self.theta_x_taper ** 2) / self.x_npix
                 taper_norm *= np.sum(self.theta_y_taper ** 2) / self.y_npix
-		
-        print('taper norm:', taper_norm)
+        if self.verbose:
+            print('taper norm:', taper_norm)
         return np.real(
             np.conj(fft_data) * fft_data
-        ) / (self.cosmo_volume * taper_norm) / self.norm_map[..., None] \
-            * self.pk_unit
+        ) / (self.cosmo_volume * taper_norm) / self.norm_map * self.pk_unit
 
     def FFT_crossxy(self):
         """
@@ -359,23 +363,25 @@ class power_spectrum(object):
 
         return np.real(
             np.conj(fft_data1) * fft_data2
-        ) / (self.cosmo_volume * taper_norm) / self.norm_map[..., None] \
-            * self.pk_unit # mK^2 Mpc^3
+        ) / (self.cosmo_volume * taper_norm) / self.norm_map * self.pk_unit # mK^2 Mpc^3
 
     
     def compute_k_modes(self):
         """Define observational Fourier axes."""
         # TODO: just make these all class properties and remove this function
-        self.kx = np.fft.fftshift(
-            np.fft.fftfreq(self.x_npix, d=self.delta_x))  # 1/Mpc
+        # self.kx = np.fft.fftshift(
+        self.kx = np.fft.fftfreq(self.x_npix, d=self.delta_x)
+            #)  # 1/Mpc
         self.kx *= 2*np.pi
         
-        self.ky = np.fft.fftshift(
-            np.fft.fftfreq(self.y_npix, d=self.delta_y))  # 1/Mpc
+        # self.ky = np.fft.fftshift(
+        self.ky = np.fft.fftfreq(self.y_npix, d=self.delta_y)
+            #)  # 1/Mpc
         self.ky *= 2*np.pi
         
-        self.k_par = np.fft.fftshift(
-            np.fft.fftfreq(self.z_npix, d=self.delta_z)  )# 1/Mpc
+        # self.k_par = np.fft.fftshift(
+        self.k_par = np.fft.fftfreq(self.z_npix, d=self.delta_z)  
+            #)# 1/Mpc
         self.k_par *= 2*np.pi
 
 
