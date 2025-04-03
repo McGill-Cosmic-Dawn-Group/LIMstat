@@ -7,6 +7,7 @@ from matplotlib import colors
 def plot_ps2d(
         pspec_2d, kperp_bins, kpara_bins, dimless=False,
         label=r'P($k_\parallel$,$k_\perp$) [(Jy/beam)$^2$ Mpc$^3$]',
+        little_h=False,
         norm=None, title=None, cmap='viridis', ax=None,
     ):
     """
@@ -31,6 +32,9 @@ def plot_ps2d(
         label: str
             Label for the colorbar.
             Default is P(k) in (Jy/beam)2 Mpc3.
+        little_h: bool
+            Whether units are Mpc/h or not.
+            Default is False.
         norm: matplotlib.colors.Normalize object.
         title: str
             Title for the axis.
@@ -55,6 +59,10 @@ def plot_ps2d(
             'Absolute value will be used for the figure.'
         )
         pspec_2d = np.abs(pspec_2d)
+    if little_h:
+        h = 'h'
+    else:
+        h = ''
 
     existing_axis = True
     if ax is None:
@@ -75,13 +83,16 @@ def plot_ps2d(
     )
     if not existing_axis:
         plt.colorbar(im, label=label, ax=ax)
-        ax.set_ylabel(r'k$_\parallel$ [Mpc$^{-1}]$')
-        ax.set_xlabel(r'k$_\perp$ [Mpc$^{-1}]$')
+        ax.set_ylabel(rf'k$_\parallel$ [{h}Mpc$^{{-1}}]$')
+        ax.set_xlabel(rf'k$_\perp$ [{h}Mpc$^{{-1}}]$')
     if title is not None:
         ax.set_title(title)
 
 
-def plot_ps1d(pspec_1d, kbins, yerr=None, title=None, dimless=False, ax=None, plot_kwargs={}):
+def plot_ps1d(
+        pspec_1d, kbins, yerr=None, 
+        title=None, dimless=False, little_h=False,
+        ax=None, plot_kwargs={}):
     """
     Method to plot spherical power spectrum.
 
@@ -103,6 +114,9 @@ def plot_ps1d(pspec_1d, kbins, yerr=None, title=None, dimless=False, ax=None, pl
         dimless: boolean
             Whether the power spectrum is dimensionless or not.
             Default: False.
+        little_h: bool
+            Whether units are Mpc/h or not.
+            Default is False.
         ax: matplotlib.axes object
             Axis to plot the figure on.
             Default is None (new figure and axis are generated).
@@ -123,6 +137,10 @@ def plot_ps1d(pspec_1d, kbins, yerr=None, title=None, dimless=False, ax=None, pl
     color = plot_kwargs.get("color", 'C0')
     lw = plot_kwargs.get("lw", 1.5)
     label = plot_kwargs.get("label", None)
+    if little_h:
+        h = 'h'
+    else:
+        h = ''
 
     if dimless:
         if yerr is not None:
@@ -133,12 +151,15 @@ def plot_ps1d(pspec_1d, kbins, yerr=None, title=None, dimless=False, ax=None, pl
         if yerr is not None:
             yerr = yerr[m]
         ax.errorbar(kbins[m], pspec_1d[m], yerr=yerr, color=color, marker='.', capsize=2, label=label, ls=ls, lw=lw)
-        ylabel = r'$P(k)$ [K$^2$ Mpc$^3$]'
+        if little_h:
+            ylabel = r'$P(k)$ [K$^2$ $h^{-3}$Mpc$^3$]'
+        else:
+            ylabel = r'$P(k)$ [K$^2$ Mpc$^3$]'
     ax.set_yscale('log')
     ax.set_xscale('log')
     if title is not None:
         ax.set_title(title)
-    ax.set_xlabel(r'$k$ [Mpc$^{-1}]$')
+    ax.set_xlabel(rf'$k$ [{h}Mpc$^{{-1}}]$')
     ax.set_ylabel(ylabel)
 
 def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, norm=None, ax=None, uv=False):
