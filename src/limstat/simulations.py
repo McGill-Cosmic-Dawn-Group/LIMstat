@@ -48,7 +48,7 @@ class cosmological_signal(object):
 				f"Shape is {np.shape(ps)}, should be (2, nk)."
 			k_theory = ps[0]
 			p_theory = ps[1] 
-			self.ps = interp1d(k_theory, p_theory, fill_value="extrapolate")
+			self.ps = np.vectorize(lambda k : 10**interp1d(np.log10(k_theory), np.log10(p_theory), fill_value="extrapolate")(np.log10(k)))
 		elif callable(ps):
 			self.ps = ps  # [mk^2*Mpc^3]
 		else:
