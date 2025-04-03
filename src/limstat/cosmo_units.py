@@ -4,6 +4,7 @@ import os
 import numpy as np
 import scipy.constants as sc
 from astropy import constants, units, cosmology
+from astropy.cosmology import units as cunits
 import warnings
 from . import utils
 
@@ -27,6 +28,7 @@ class cosmo_units(object):
             freqs = None,
             rest_freq=1420.*units.MHz,
             cosmo=cosmology.Planck18,
+            little_h=False,
             verbose = False,
             ):
             
@@ -52,6 +54,8 @@ class cosmo_units(object):
             cosmo: astropy.cosmology class
                 Cosmology to use for computations.
                 Default is Planck18.
+            little_h: bool
+                Whether to use Mpc/h or not.
             verbose: bool
                 Whether to output messages when running functions.
         """
@@ -62,6 +66,7 @@ class cosmo_units(object):
         self.cosmo = cosmo
         self.x_npix = x_npix
         self.y_npix = y_npix
+        self.little_h = bool(little_h)
 
         if theta_x is not None:
 
@@ -98,23 +103,59 @@ class cosmo_units(object):
 
             self.z_npix = self.freqs.shape[0]
 
-            self.delta_thetay = self.theta_y / self.y_npix
-            self.delta_thetax = self.theta_x / self.x_npix
+            self.delta_thetay = self.theta_y.value / self.y_npix
+            self.delta_thetax = self.theta_x.value / self.x_npix
             self.delta_freq = np.diff(self.freqs).mean()
 
             self.dRpara_dnu = (constants.c * (1 + self.z)**2/ (self.cosmo.H(self.z).si * self.rest_freq)).to("Mpc/Hz")
             self.dRperp_dtheta = self.cosmo.comoving_distance(self.z).to(units.Mpc)
-
-            self.Lx = self.theta_x * self.dRperp_dtheta.value
-            self.Ly = self.theta_y * self.dRperp_dtheta.value
+            if self.little_h:
+                self.dRperp_dtheta = self.dRperp_dtheta.to(
+                    units.Mpc/cunits.littleh,
+                    cunits.with_H0(self.cosmo.H0)
+                )
+                self.dRpara_dnu = self.dRpara_dnu.to(
+                    units.Mpc/cunits.littleh/units.Hz,
+                    cunits.with_H0(self.cosmo.H0)
+                )
+            self.Lx = self.theta_x.value * self.dRperp_dtheta
+            self.Ly = self.theta_y.value * self.dRperp_dtheta
             self.Lz = (max(self.freqs) - min(self.freqs)) *  self.dRpara_dnu
-        else:
-            self.Lx = Lx
-            self.Ly = Ly
-            self.Lz  = Lz
 
+        else:
+            self.Lx = utils.comply_units(
+                value=Lx,
+                default_unit=units.Mpc,
+                quantity="Lx",
+                desired_unit=units.Mpc,
+            )
+            self.Ly = utils.comply_units(
+                value=Ly,
+                default_unit=units.Mpc,
+                quantity="Ly",
+                desired_unit=units.Mpc,
+            )
+            self.Lz = utils.comply_units(
+                value=Lz,
+                default_unit=units.Mpc,
+                quantity="Lz",
+                desired_unit=units.Mpc,
+            )
             self.z_npix = z_npix
 
+        if self.little_h:
+            self.Lx = self.Lx.to(
+                units.Mpc/cunits.littleh,
+                cunits.with_H0(self.cosmo.H0)
+            )
+            self.Ly = self.Ly.to(
+                units.Mpc/cunits.littleh,
+                cunits.with_H0(self.cosmo.H0)
+            )
+            self.Lz = self.Lz.to(
+                units.Mpc/cunits.littleh,
+                cunits.with_H0(self.cosmo.H0)
+            )
 
         # # these two lines give you the physical dimensions of a pixel
         # # (inverse of sampling ratealong each axis)
