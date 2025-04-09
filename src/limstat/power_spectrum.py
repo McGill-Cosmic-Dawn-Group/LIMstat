@@ -218,6 +218,7 @@ class power_spectrum(object):
                                           'not properly implemented yet')
         else:
             self.PSF = None
+            # FT of Dirac delta function
             self.norm_map = np.ones((self.x_npix, self.y_npix))[..., None]
 
 
@@ -660,7 +661,6 @@ class power_spectrum(object):
                 range=(kmin, kmax)
             )
             
-        print(bin_edges)
         # bin the 2D power spectrum
         pspec = np.zeros(len(bin_edges) - 1)
         weighted_k = np.zeros(len(bin_edges) - 1)
