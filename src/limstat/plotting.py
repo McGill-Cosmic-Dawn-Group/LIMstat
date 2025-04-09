@@ -51,7 +51,7 @@ def plot_ps2d(
 
     kperp_bins = np.atleast_1d(kperp_bins)
     kpara_bins = np.atleast_1d(kpara_bins)
-    assert np.shape(pspec_2d) == (kperp_bins.size, kpara_bins.size), \
+    assert np.shape(pspec_2d) == (kpara_bins.size, kperp_bins.size), \
         "Input pspec must have shape (kperp_bins.size, kpara_bins.size)."
     if np.any(pspec_2d < 0):
         warnings.warn(
@@ -70,16 +70,17 @@ def plot_ps2d(
         existing_axis = False
     if dimless:
         k = np.sqrt(kperp_bins[None, :]**2 + kpara_bins[:, None]**2)
-        pspec2d *= k**3 *1./2./np.pi**2
+        pspec_2d *= k**3 *1./2./np.pi**2
         label = r'$\Delta^2(k)$ [K$^2$]'
 
     im = ax.pcolor(
         kperp_bins,
         kpara_bins,
         pspec_2d,
-        shading='auto',
+        shading='nearest',
         cmap=cmap,
         norm=norm,
+        edgecolors='w', linewidth=0.5,
     )
     if not existing_axis:
         plt.colorbar(im, label=label, ax=ax)
@@ -92,7 +93,7 @@ def plot_ps2d(
 def plot_ps1d(
         pspec_1d, kbins, yerr=None, 
         title=None, dimless=False, little_h=False,
-        ax=None, plot_kwargs={}):
+        ax=None, log=True, **kargs):
     """
     Method to plot spherical power spectrum.
 
@@ -126,43 +127,43 @@ def plot_ps1d(
 
     assert kbins.size == pspec_1d.size, \
         "pspec_1d and kbins must have identical size."
-    if yerr is not None:
-        assert kbins.size == yerr.size, \
-            "yerr and kbins must have identical size."
 
     m = pspec_1d > 0.
+    existing_axis = True
     if ax is None:
+        existing_axis = False
         fig, ax = plt.subplots()
-    ls = plot_kwargs.get("ls", '-')
-    color = plot_kwargs.get("color", 'C0')
-    lw = plot_kwargs.get("lw", 1.5)
-    label = plot_kwargs.get("label", None)
+    # ls = plot_kwargs.get("ls", '-')
+    # color = plot_kwargs.get("color", 'C0')
+    # lw = plot_kwargs.get("lw", 1.5)
+    # label = plot_kwargs.get("label", None)
     if little_h:
         h = 'h'
     else:
         h = ''
 
     if dimless:
-        if yerr is not None:
-            yerr = kbins[m]**3 * yerr[m] / 2./np.pi**2
-        ax.errorbar(kbins[m], kbins[m]**3 * pspec_1d[m]/2./np.pi**2, yerr=yerr, color=color, marker='.', capsize=2, ls=ls, lw=lw, label=label)
+        ax.errorbar(kbins[m], kbins[m]**3 * pspec_1d[m]/2./np.pi**2, **kargs)
         ylabel = r'$\Delta^2(k)$ [K$^2$]'
     else:
-        if yerr is not None:
-            yerr = yerr[m]
-        ax.errorbar(kbins[m], pspec_1d[m], yerr=yerr, color=color, marker='.', capsize=2, label=label, ls=ls, lw=lw)
+        ax.errorbar(kbins[m], pspec_1d[m], **kargs)
         if little_h:
             ylabel = r'$P(k)$ [K$^2$ $h^{-3}$Mpc$^3$]'
         else:
             ylabel = r'$P(k)$ [K$^2$ Mpc$^3$]'
-    ax.set_yscale('log')
+    if log:
+        ax.set_yscale('log')
     ax.set_xscale('log')
-    if title is not None:
+    if (title is not None) and not existing_axis:
         ax.set_title(title)
     ax.set_xlabel(rf'$k$ [{h}Mpc$^{{-1}}]$')
     ax.set_ylabel(ylabel)
 
-def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, norm=None, ax=None, uv=False):
+def plot_map(
+    box, fov, ifreq=None, 
+    label=r'$T$ [K]', cmap='RdBu_r', 
+    title=None, norm=None, ax=None,
+    uv=False, cosmo_space=False):
     """
     Method to plot 2D sky map from lightcone.
 
@@ -174,6 +175,8 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
         fov: float
             Field of view corresponding to the image.
             Must have units.
+            If cosmo_space is True, then should be a
+            comoving size, in units eq. to Mpc.
         ifreq: int
             Which frequency channel to plot if box is 3D.
             Default is None: nfreqs//2.
@@ -193,7 +196,9 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
         uv: boolean
             Whether you are plotting a (u, v) map or not.
             Default: False.
-
+        cosmo_space: float
+            Whether the map is in cosmological space or not.
+            Default is False.
 
     """
     ang_res = fov / box.shape[0]
@@ -215,10 +220,16 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
             1.22/ang_res.to(units.rad).value,
             box.shape[0]
         )
+    elif cosmo_space:
+        xlin = np.linspace(
+            0,
+            fov.value,
+            box.shape[0]
+        )
     else:
         xlin = np.linspace(
-            -fov.to(units.deg).value/2,
-            fov.to(units.deg).value/2,
+            -fov.value/2,
+            fov.value/2,
             box.shape[0]
         )
     existing_axis = True
@@ -237,6 +248,9 @@ def plot_map(box, fov, ifreq=None, label=r'$T$ [K]', cmap='RdBu_r', title=None, 
     if uv:
         ax.set_ylabel(rf'$u$')
         ax.set_xlabel(rf'$v$')
+    elif cosmo_space:
+        ax.set_xlabel(rf'$L_x$ [{fov.unit}]')
+        ax.set_ylabel(rf'$L_y$ [{fov.unit}]')
     else:
         ax.set_ylabel(rf'$\theta$ [{fov.unit}]')
         ax.set_xlabel(rf'$\theta$ [{fov.unit}]')
