@@ -56,6 +56,7 @@ class cosmo_units(object):
                 Default is Planck18.
             little_h: bool
                 Whether to use Mpc/h or not.
+                Default is False.
             verbose: bool
                 Whether to output messages when running functions.
         """
