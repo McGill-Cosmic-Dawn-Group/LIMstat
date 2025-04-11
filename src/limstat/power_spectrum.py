@@ -764,7 +764,7 @@ class power_spectrum(object):
                 weighted_k[k] = np.mean(kmag_3d[mask])
         pspec[np.isnan(pspec)] = 0.0
         if dimensionless:
-            pspec *= weighted_k**3 / (2*np.pi)**2  # [mk^2]
+            pspec *= weighted_k**3 / 2. / np.pi**2  # [mk^2]
         # Check empty bins
         if np.any(weighted_k == 0.):
             warnings.warn('Some empty k-bins!')
