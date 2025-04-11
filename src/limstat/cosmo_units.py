@@ -26,6 +26,7 @@ class cosmo_units(object):
             theta_x = None,
             theta_y = None,
             freqs = None,
+            redshift = None,
             rest_freq=1420.*units.MHz,
             cosmo=cosmology.Planck18,
             little_h=False,
@@ -44,10 +45,8 @@ class cosmo_units(object):
             freqs: list or array of floats.
                 List of frequencies the signal was measured on.
                 Frequencies must be given in MHZ.
-            data2: array of real floats.
-                For cross-spectra: data2 is cross-correlated with data
-                to compute the power spectrum.
-                It should have the same units and shape as data.
+            redshift: float
+                Redshift at the box centre, if defined from cosmological space.
             rest_freq: float
                 Rest-frequency of the emission line in units.MHz.
                 Default is 1420 for the 21cm line.
@@ -68,6 +67,12 @@ class cosmo_units(object):
         self.x_npix = x_npix
         self.y_npix = y_npix
         self.little_h = bool(little_h)
+        self.rest_freq = utils.comply_units(
+            value=rest_freq,
+            default_unit=units.MHz,
+            quantity="rest_freq",
+            desired_unit=units.Hz,
+        )
 
         if theta_x is not None:
 
@@ -75,12 +80,6 @@ class cosmo_units(object):
                 value=freqs,
                 default_unit=units.MHz,
                 quantity="freqs",
-                desired_unit=units.Hz,
-            )
-            self.rest_freq = utils.comply_units(
-                value=rest_freq,
-                default_unit=units.MHz,
-                quantity="rest_freq",
                 desired_unit=units.Hz,
             )
 
@@ -124,6 +123,9 @@ class cosmo_units(object):
             self.Lz = (max(self.freqs) - min(self.freqs)) *  self.dRpara_dnu
 
         else:
+            if redshift is None:
+                raise ValueError('Must specify redshift along with box length.')
+            self.z = float(redshift)
             self.Lx = utils.comply_units(
                 value=Lx,
                 default_unit=units.Mpc,
@@ -142,7 +144,21 @@ class cosmo_units(object):
                 quantity="Lz",
                 desired_unit=units.Mpc,
             )
-            self.z_npix = z_npix
+            self.z_npix = int(z_npix)
+
+            self.dRperp_dtheta = self.cosmo.comoving_distance(self.z).to(units.Mpc)
+            self.theta_x = self.Lx / self.dRperp_dtheta
+            self.theta_y = self.Ly / self.dRperp_dtheta
+            self.delta_thetax = self.theta_x / self.x_npix
+            self.delta_thetay = self.theta_y / self.y_npix
+
+            self.dRpara_dnu = (constants.c * (1 + self.z)**2/ (self.cosmo.H(self.z).si * self.rest_freq)).to("Mpc/Hz")
+            bandwidth = self.Lz / self.dRpara_dnu
+            self.mid_freq = self.rest_freq / (1. + self.z)
+            fmin = self.mid_freq - bandwidth/2.
+            fmax = self.mid_freq + bandwidth/2.
+            self.freqs = np.linspace(fmin.value, fmax.value, self.z_npix) * units.Hz
+            self.delta_freq = np.diff(self.freqs.value).mean() * units.Hz
 
         if self.little_h:
             self.Lx = self.Lx.to(
