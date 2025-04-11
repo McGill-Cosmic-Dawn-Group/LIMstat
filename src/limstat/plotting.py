@@ -251,6 +251,9 @@ def plot_map(
     elif cosmo_space:
         ax.set_xlabel(rf'$L_x$ [{fov.unit}]')
         ax.set_ylabel(rf'$L_y$ [{fov.unit}]')
+        dx = np.diff(ax.get_xticks())[-1]
+        ax.set_yticks(np.arange(xlin.min(), xlin.max(), dx))
+        ax.set_xticks(np.arange(xlin.min(), xlin.max(), dx))
     else:
         ax.set_ylabel(rf'$\theta$ [{fov.unit}]')
         ax.set_xlabel(rf'$\theta$ [{fov.unit}]')
