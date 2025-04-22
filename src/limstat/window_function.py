@@ -94,7 +94,7 @@ class window_function(object):
 		
 		self.cosmo_volume = cosmo_units.cosmo_volume.value
 	
-		self.verbose = verbose
+		self.verbose = bool(verbose)
 
 		if PSF_2 is not None:
 			self.PSF_2 = PSF_2
@@ -413,7 +413,7 @@ class window_function(object):
 
 		self.W_kperp_kkz = np.zeros((nperp,npar,npar), dtype = complex)
 		# Eq. B22 of Fronenberg+2024
-		for i in tqdm(range(nperp)):
+		for i in tqdm(range(nperp), disable=~self.verbose):
 			for j in range(npar):
 				for k in range(npar):
 					idx = (j - k) + npar//2
@@ -464,7 +464,7 @@ class window_function(object):
 		#make this len(k_edges) and have the 0 row be the garbage bin
 		self.W_k_kprime = np.zeros((len(k_edges), len(k_prime)))
 
-		for i in tqdm(range(nperp)):
+		for i in tqdm(range(nperp), disable=~self.verbose):
 			for j in range(npar):
 
 				k_mag = np.sqrt(self.kperp_bin[i]**2 + self.k_par_long[j]**2)
@@ -535,7 +535,7 @@ class window_function(object):
 		#make this len(k_edges) and have the 0 row be the garbage bin
 		cyl_wf = np.zeros((kperp.size, kpar.size, k_prime.size))
 
-		for i in tqdm(range(self.kperp_bin.size)):
+		for i in tqdm(range(self.kperp_bin.size), disable=~self.verbose):
 			# check with k bin it falls into
 			idx_1 = np.digitize(np.linalg.norm(self.kperp_bin[i]), kperp)
 			if idx_1 >= len(kperp):
@@ -605,7 +605,7 @@ class window_function(object):
 		#make this len(k_edges) and have the 0 row be the garbage bin
 		cyl_wf = np.zeros((kperp.size, kpar.size, kpar.size))
 
-		for i in tqdm(range(self.kperp_bin.size)):
+		for i in tqdm(range(self.kperp_bin.size), disable=self.verbose):
 			# check with k bin it falls into
 			idx_1 = np.digitize(np.linalg.norm(self.kperp_bin[i]), kperp)
 			if idx_1 >= len(kperp):
