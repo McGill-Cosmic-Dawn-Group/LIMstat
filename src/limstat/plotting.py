@@ -70,7 +70,7 @@ def plot_ps2d(
         existing_axis = False
     if dimless:
         k = np.sqrt(kperp_bins[None, :]**2 + kpara_bins[:, None]**2)
-        pspec_2d *= k**3 *1./2./np.pi**2
+        pspec_2d *= k**3 /2./np.pi**2
         label = r'$\Delta^2(k)$ [K$^2$]'
 
     im = ax.pcolor(

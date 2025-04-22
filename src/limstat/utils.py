@@ -314,7 +314,6 @@ def z2f(z, rest_freq=constants.f21, unit='MHz'):
 
     return rest_freq / (1. + z)
 
-
 def cyl_to_sph(cyl_ps, kperp_bins, kpara_bins, kbins=None, nbins=None):
     """
     Compute spherical power spectrum from cylindrical one.
