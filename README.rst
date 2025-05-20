@@ -23,7 +23,7 @@ installing the package from the GitHub repository:
 
 ::
 
-   $ conda create -n limstat python=3
+   $ conda create -n limstat python=3.11
    $ conda activate limstat
    $ git clone https://github.com/McGill-Cosmic-Dawn-Group/LIMstat.git
    $ cd LIMstat
