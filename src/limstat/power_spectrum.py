@@ -577,6 +577,89 @@ class power_spectrum(object):
 
         return k_par_bin, k_perp_bin, pspec_2D
 
+    @staticmethod
+    def _nonempty_bin_edges(k_values, nbins):
+        """
+        Build equal-width spherical k-bin edges and merge empty bins.
+        """
+        if nbins <= 0:
+            raise ValueError("nbins must be positive.")
+
+        if k_values.size == 0:
+            raise ValueError("No finite, nonzero Fourier modes to bin.")
+
+        if nbins == 1:
+            return np.array([
+                np.nextafter(k_values.min(), -np.inf),
+                np.nextafter(k_values.max(), np.inf),
+            ])
+
+        edges = np.linspace(k_values.min(), k_values.max(), nbins + 1)
+        edges[0] = np.nextafter(edges[0], -np.inf)
+        edges[-1] = np.nextafter(edges[-1], np.inf)
+
+        while len(edges) > 2:
+            counts = power_spectrum._counts_in_bins(k_values, edges)
+            empty_bins = np.where(counts == 0)[0]
+            if empty_bins.size == 0:
+                break
+
+            empty_bin = empty_bins[0]
+            if empty_bin == 0:
+                remove_edge = 1
+            elif empty_bin == len(counts) - 1:
+                remove_edge = empty_bin
+            elif counts[empty_bin - 1] <= counts[empty_bin + 1]:
+                remove_edge = empty_bin
+            else:
+                remove_edge = empty_bin + 1
+            edges = np.delete(edges, remove_edge)
+
+        return edges
+
+    @staticmethod
+    def _counts_in_bins(k_values, bin_edges):
+        """
+        Count values in right-closed k bins.
+        """
+        bin_indices = np.searchsorted(bin_edges, k_values, side='left') - 1
+        in_range = (bin_indices >= 0) & (bin_indices < len(bin_edges) - 1)
+        return np.bincount(
+            bin_indices[in_range], minlength=len(bin_edges) - 1
+        )
+
+    @staticmethod
+    def _bin_1d_power(k_values, ps_values, bin_edges):
+        """
+        Average power values in right-closed k bins.
+        """
+        if len(bin_edges) <= 1:
+            raise AssertionError("bin_edges must contain at least two values.")
+        if np.any(np.diff(bin_edges) <= 0):
+            raise AssertionError("bin_edges must be strictly increasing.")
+
+        bin_indices = np.searchsorted(bin_edges, k_values, side='left') - 1
+        in_range = (bin_indices >= 0) & (bin_indices < len(bin_edges) - 1)
+        bin_indices = bin_indices[in_range]
+        k_values = k_values[in_range]
+        ps_values = ps_values[in_range]
+
+        counts = np.bincount(bin_indices, minlength=len(bin_edges) - 1)
+        ps_sums = np.bincount(
+            bin_indices, weights=ps_values, minlength=len(bin_edges) - 1
+        )
+        k_sums = np.bincount(
+            bin_indices, weights=k_values, minlength=len(bin_edges) - 1
+        )
+
+        occupied = counts > 0
+        pspec = np.full(len(bin_edges) - 1, np.nan)
+        weighted_k = np.full(len(bin_edges) - 1, np.nan)
+        pspec[occupied] = ps_sums[occupied] / counts[occupied]
+        weighted_k[occupied] = k_sums[occupied] / counts[occupied]
+
+        return weighted_k, pspec, counts
+
   
     def compute_1d_from_2d(self, ps_data=None, bin_edges=None, nbins=20,
                            nbins_cyl=50, pspec_2D=None, k_par_bin = None, k_perp_bin=None,):
@@ -678,7 +761,8 @@ class power_spectrum(object):
         return weighted_k, pspec
 
     def compute_1D_pspec(self, ps_data=None, bin_edges=None,
-                         dimensionless=False, nbins=30):
+                         dimensionless=False, nbins=30,
+                         return_counts=False):
         """
         Compute spherical power spectrum of self.data.
 
@@ -700,12 +784,17 @@ class power_spectrum(object):
                 Number of bins to use when building the spherical
                 power spectrum.
                 Default is 30. Set to kbins.size if inconsistent.
+            return_counts: bool
+                Whether to return the number of modes in each spherical bin.
+                Default is False.
         Returns
         -------
             kbins: array of floats
                 Spherical k-bins used, weighted by cell population.
             pspec: array of floats
                 Spherical power spectrum in units of mK2 Mpc^3.
+            counts: array of ints
+                Number of modes per bin. Only returned if return_counts=True.
 
         """
         if ps_data is None:
@@ -737,39 +826,41 @@ class power_spectrum(object):
             + self.ky[:, None, None] ** 2
             + self.k_par[None, None, :] ** 2
         )
-        # This is actually really easy since you are collapsing to 1D.
-        # You just want to use the check kmag thing to find all
-        # the P(k_perp,k_par) that are in that bin and then average them
-        # together. Literally just treat it like the old 2D case.
+     
+        valid = (
+            np.isfinite(kmag_3d)
+            & np.isfinite(ps_data)
+            & (kmag_3d > 0)
+        )
+        if not np.any(valid):
+            raise ValueError("No finite, nonzero Fourier modes to bin.")
 
-        # define the spherical bins and bin edges
+        k_values = kmag_3d[valid]
+        ps_values = ps_data[valid]
+
+        # Define default spherical bins from occupied radii so every
+        # generated bin contains at least one sampled Fourier mode.
         if bin_edges is None:
-            kmin = np.min(kmag_3d) * 2.
-            kmax = np.max(kmag_3d) / 2.
-            bin_edges = np.histogram_bin_edges(
-                np.sort(kmag_3d.flatten()),
-                bins=nbins,
-                range=(kmin, kmax)
-            )
-        # now the pspec is in (kx,ky,kz) so we want to go through each kz
-        # fourier mode and collapse the kxky into 1D to get a 2D pspec
+            bin_edges = self._nonempty_bin_edges(k_values, nbins)
+        else:
+            bin_edges = np.asarray(bin_edges)
+
         if self.verbose:
             print('Binning data...')
-        pspec = np.zeros(len(bin_edges) - 1)
-        weighted_k = np.zeros(len(bin_edges) - 1)
-        for k in range(len(bin_edges) - 1):
-            mask = (bin_edges[k] < kmag_3d) & (kmag_3d <= bin_edges[k + 1]) & (kmag_3d != 0)
-            if mask.any():
-                pspec[k] = np.mean(ps_data[mask])  # [mk^2 Mpc^3]
-                weighted_k[k] = np.mean(kmag_3d[mask])
-        pspec[np.isnan(pspec)] = 0.0
+
+        weighted_k, pspec, counts = self._bin_1d_power(
+            k_values, ps_values, bin_edges
+        )
+
         if dimensionless:
             pspec *= weighted_k**3 / 2. / np.pi**2  # [mk^2]
-        # Check empty bins
-        if np.any(weighted_k == 0.):
-            warnings.warn('Some empty k-bins!')
+
+        if np.any(counts == 0):
+            warnings.warn('Some empty k-bins!', stacklevel=2)
         
-    
+        if return_counts:
+            return weighted_k, pspec, counts
+
         return weighted_k, pspec
 
 

@@ -677,3 +677,88 @@ class test_power_spectrum(unittest.TestCase):
         k = np.atleast_1d(k)
         return amp * np.ones(k.shape)
 
+
+def _minimal_1d_pspec_instance(kx, ky, kpar):
+    pspec = power_spectrum.__new__(power_spectrum)
+    pspec.kx = np.asarray(kx)
+    pspec.ky = np.asarray(ky)
+    pspec.k_par = np.asarray(kpar)
+    pspec.data = np.zeros((pspec.ky.size, pspec.kx.size, pspec.k_par.size))
+    pspec.pk_unit = units.mK**2 * units.Mpc**3
+    pspec.verbose = False
+    pspec.compute_k_modes = lambda: None
+    return pspec
+
+
+def test_compute_1D_pspec_default_bins_are_occupied():
+    pspec = _minimal_1d_pspec_instance(
+        kx=[0., 1., 2., 4.],
+        ky=[0.],
+        kpar=[0.],
+    )
+    ps_data = np.array([[[np.nan], [0.], [2.], [4.]]])
+
+    with pytest.warns(UserWarning, match="Assuming ps_data"):
+        weighted_k, power, counts = pspec.compute_1D_pspec(
+            ps_data=ps_data,
+            nbins=3,
+            return_counts=True,
+        )
+
+    assert np.all(counts > 0)
+    assert np.all(np.isfinite(weighted_k))
+    assert np.all(np.isfinite(power))
+    assert 0. in power
+
+
+def test_compute_1D_pspec_default_bins_keep_low_k_coverage():
+    k_values = np.array(
+        [0.1, 0.2] + [0.8] * 20 + [0.9] * 20 + [1.0] * 20
+    )
+
+    bin_edges = power_spectrum._nonempty_bin_edges(k_values, nbins=3)
+    counts = power_spectrum._counts_in_bins(k_values, bin_edges)
+
+    assert np.all(counts > 0)
+    assert bin_edges[1] < 0.8
+    assert len(bin_edges) - 1 < 3
+
+
+def test_compute_1D_pspec_merges_excessive_default_bins():
+    pspec = _minimal_1d_pspec_instance(
+        kx=[0., 1., 2.],
+        ky=[0.],
+        kpar=[0.],
+    )
+    ps_data = np.array([[[1.], [2.], [3.]]])
+
+    with pytest.warns(UserWarning, match="Assuming ps_data"):
+        weighted_k, _, counts = pspec.compute_1D_pspec(
+            ps_data=ps_data,
+            nbins=10,
+            return_counts=True,
+        )
+
+    assert weighted_k.size == 2
+    assert np.all(counts > 0)
+
+
+def test_compute_1D_pspec_custom_bins_report_empty_bins():
+    pspec = _minimal_1d_pspec_instance(
+        kx=[0., 1., 4.],
+        ky=[0.],
+        kpar=[0.],
+    )
+    ps_data = np.array([[[1.], [2.], [4.]]])
+
+    with pytest.warns(UserWarning, match="Some empty k-bins"):
+        weighted_k, power, counts = pspec.compute_1D_pspec(
+            ps_data=ps_data,
+            bin_edges=[0., 2., 3., 5.],
+            return_counts=True,
+        )
+
+    assert counts.tolist() == [1, 0, 1]
+    assert np.isnan(weighted_k[1])
+    assert np.isnan(power[1])
+
