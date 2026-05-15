@@ -124,6 +124,11 @@ class fast_interferometer(object):
         #set all nans to 0 
         uv_map[np.isnan(binned_uv.statistic)] = 0
 
+        #make sure the cel with the (u, v)=(0,0) mode is set to 0 because interferometers don't measure the sky mean
+        DC_index_u = np.where(u == 0)[0][0]
+        DC_index_v = np.where(v == 0)[0][0]
+        uv_map[DC_index_u, DC_index_v] = 0
+
         return uv_map
 
     def get_psf(self, freq):
