@@ -1,7 +1,7 @@
 import numpy as np
 from astropy import units
 from scipy import stats
-
+import scipy.interpolate 
 class fast_interferometer(object):
 
     ''' A class to simulate the output of an interferometer.'''
@@ -56,15 +56,15 @@ class fast_interferometer(object):
         """
 
 
-    def get_bls(self):
-        '''Get the unique baselines from the antenna locations.
+    def get_bls(self, freq):
+        #GOOD KEEP THIS
+        '''Get the unique baselines from the antenna locations and calculate the uv coordinates.
         Returns
         -------
         Nothing :) '''
 
         n_ants = self.ants.shape[0]
         n_bls = int(n_ants * (n_ants - 1) / 2) # this is the number of baselines
-
         bls = np.zeros((n_bls,2)) # initialize a list holding the length of all the baselines 
         k = 0 #initialize this k variable
         for i in range(n_ants):
@@ -76,8 +76,69 @@ class fast_interferometer(object):
      
         total_bls = np.concatenate((bls,-bls)) #this is the total number of baselines
         self.unique_bls, self.counts = np.unique(total_bls,axis=0, return_counts = True) #this is the list of unique baselines
+        
+        frequency = freq.to(units.Hz).value
+        lambda_ = 3e8 / frequency
+        self.u_coords = self.unique_bls[:,0]/lambda_
+        self.v_coords = self.unique_bls[:,1]/lambda_
+
         return self.unique_bls
-    def get_uvmap(self, freq):
+
+
+    # def get_uvmap_skycoords(self, freq):
+    #     '''Get the uv map of the interferometer. This does NOT do rotation synthesis, it is the instantaneous uv coverage.
+    #     Parameters
+    #     ----------
+    #     freq : float
+    #         The frequency of observation in MHz, GHz, etc...
+    #     Returns
+    #     -------
+    #     uv_map : array_like
+    #         The uv coverage of the interferometer.
+    #     '''
+    #     self.get_bls(freq)
+
+
+    #     L = np.sin(self.theta_x)
+    #     M = np.sin(self.theta_y)
+
+    #     self.u = np.fft.fftshift(np.fft.fftfreq(self.x_npix+1, d=L/(self.x_npix+1)))
+    #     self.v = np.fft.fftshift(np.fft.fftfreq(self.y_npix+1, d=M/(self.y_npix+1)))
+
+    #     self.dl = L / self.x_npix
+    #     self.dm = M / self.y_npix
+
+    #     self.du = self.u[1] - self.u[0]
+    #     self.dv = self.v[1] - self.v[0]
+
+    #     #the uv map is the mean of the baselines in each uv bin
+    #     binned_uv = stats.binned_statistic_2d(self.v_coords,self.u_coords, np.ones((len(self.unique_bls[:,0]))),
+    #                                     statistic='mean',
+    #                                     bins=[self.v, self.u])
+
+    #     # counts map is the number of baselines in each uv bin (this is from redundant baselines)
+    #     binned_counts = stats.binned_statistic_2d(self.v_coords,self.u_coords, self.counts,
+    #                                     statistic='sum',
+    #                                     bins=[self.v, self.u])
+        
+    #     # get the number of measurments per uv bin (this is from redundant baselines)
+    #     self.count_map = binned_counts.statistic
+    #     #set all nans to 0 
+    #     self.count_map[np.isnan(binned_counts.statistic)] = 0
+
+    #     uv_map = binned_uv.statistic
+    #     #set all nans to 0 
+    #     uv_map[np.isnan(binned_uv.statistic)] = 0
+
+    #     #make sure the cel with the (u, v)=(0,0) mode is set to 0 because interferometers don't measure the sky mean
+    #     DC_index_u = np.where(self.u == 0)[0][0]
+    #     DC_index_v = np.where(self.v == 0)[0][0]
+    #     uv_map[DC_index_u, DC_index_v] = 0
+
+    #     return uv_map
+
+    def get_uvmap_halfwave(self, freq):
+        # GOOD KEEP THIS
         '''Get the uv map of the interferometer. This does NOT do rotation synthesis, it is the instantaneous uv coverage.
         Parameters
         ----------
@@ -88,32 +149,19 @@ class fast_interferometer(object):
         uv_map : array_like
             The uv coverage of the interferometer.
         '''
-        self.get_bls()
+        self.get_bls(freq)
+        self.du = 0.5
+        self.dv = 0.5
+        self.u_grid = np.arange(-self.u_coords.max(),self.u_coords.max(),self.du)
+        self.v_grid = np.arange(-self.v_coords.max(),self.v_coords.max(),self.dv)
 
-        frequency = freq.to(units.Hz).value
-        lambda_ = 3e8 / frequency
-
-        L = np.sin(self.theta_x)
-        M = np.sin(self.theta_y)
-
-        u = np.fft.fftshift(np.fft.fftfreq(self.x_npix+1, d=L/(self.x_npix+1)))
-        v = np.fft.fftshift(np.fft.fftfreq(self.y_npix+1, d=M/(self.y_npix+1)))
-
-        self.dl = L / self.x_npix
-        self.dm = M / self.y_npix
-
-        self.du = u[1] - u[0]
-        self.dv = v[1] - v[0]
-    
-        u_coords,v_coords = self.unique_bls[:,0]/lambda_ , self.unique_bls[:,1]/lambda_
-
-        binned_uv = stats.binned_statistic_2d(v_coords,u_coords, np.ones((len(self.unique_bls[:,0]))),
+        binned_uv = stats.binned_statistic_2d(self.v_coords,self.u_coords, np.ones((len(self.unique_bls[:,0]))),
                                         statistic='mean',
-                                        bins=[v, u])
-        
-        binned_counts = stats.binned_statistic_2d(v_coords,u_coords, self.counts,
+                                        bins=[self.v_grid, self.u_grid])
+
+        binned_counts = stats.binned_statistic_2d(self.v_coords,self.u_coords, self.counts,
                                         statistic='sum',
-                                        bins=[v, u])
+                                        bins=[self.v_grid, self.u_grid])
         
         # get the number of measurments per uv bin (this is from redundant baselines)
         self.count_map = binned_counts.statistic
@@ -123,14 +171,8 @@ class fast_interferometer(object):
         uv_map = binned_uv.statistic
         #set all nans to 0 
         uv_map[np.isnan(binned_uv.statistic)] = 0
-
-        #make sure the cel with the (u, v)=(0,0) mode is set to 0 because interferometers don't measure the sky mean
-        DC_index_u = np.where(u == 0)[0][0]
-        DC_index_v = np.where(v == 0)[0][0]
-        uv_map[DC_index_u, DC_index_v] = 0
-
         return uv_map
-
+        
     def get_psf(self, freq):
         '''Get the point spread function of the interferometer.
         Parameters
@@ -147,6 +189,117 @@ class fast_interferometer(object):
         
         return psf
     
+
+    def sky_uv_coords(self):
+        #GOOD KEEP THIS
+        '''Get the uv coordinates of the sky map.
+        Parameters
+        ----------
+        sky_map : array_like
+            The sky map to be observed in K.
+        Returns
+        -------
+        uv_coords : array_like
+            The uv coordinates of the sky map.
+        '''
+        L = np.sin(self.theta_x)
+        M = np.sin(self.theta_y)
+
+        dl = L / self.x_npix
+        dm = M / self.y_npix
+
+        l = np.arange(-L/2, L/2, dl)
+        m = np.arange(-M/2, M/2, dm)
+
+        u = np.fft.fftshift(np.fft.fftfreq(len(l), d=dl))
+        v = np.fft.fftshift(np.fft.fftfreq(len(m), d=dm))
+
+        return u, v, l,m, dl, dm
+
+    def sky_fft_to_uv(self,sky_map):
+        #GOOD KEEP THIS
+        """FFT sky_map to UV; same scaling as get_dirty_map."""
+
+        _,_,_,_, dl, dm = self.sky_uv_coords()
+
+        sky_fft = np.fft.fftshift(
+            np.fft.fft2(np.fft.ifftshift(sky_map, axes=(0, 1)))
+        ) * (dl * dm)
+
+        return sky_fft
+
+    def interp_sky_fft_to_halfwave(self, sky_map, freq, method="linear", fill_value=0.0):
+        #GOOD KEEP THIS
+        """
+        Interpolate model visibilities onto the half-wave grid used by get_uvmap_halfwave.
+        Uses self.u_grid and self.v_grid (set by get_uvmap_halfwave). Target (u,v)
+        are bin centres so V_hw matches uv_map.shape.
+        """
+        uv_map = self.get_uvmap_halfwave(freq)  # sets self.u_grid, self.v_grid, uv_map
+        sky_fft = self.sky_fft_to_uv(sky_map)
+        u_nat, v_nat, _, _, _,_= self.sky_uv_coords()
+
+        # Targets tied to self.u_grid / self.v_grid (same bins as uv_map)
+        self.u_hw = 0.5 * (self.u_grid[:-1] + self.u_grid[1:])
+        self.v_hw = 0.5 * (self.v_grid[:-1] + self.v_grid[1:])
+    
+
+        interp_re = scipy.interpolate.RegularGridInterpolator(
+            (v_nat, u_nat),
+            sky_fft.real,
+            method=method,
+            bounds_error=False,
+            fill_value=fill_value,
+        )
+        interp_im = scipy.interpolate.RegularGridInterpolator(
+            (v_nat, u_nat),
+            sky_fft.imag,
+            method=method,
+            bounds_error=False,
+            fill_value=fill_value,
+        )
+        VV, UU = np.meshgrid(self.v_hw, self.u_hw, indexing="ij")
+        pts = np.column_stack([VV.ravel(), UU.ravel()])
+        V_hw = (interp_re(pts) + 1j * interp_im(pts)).reshape(len(self.v_hw), len(self.u_hw))
+        
+        return V_hw, uv_map
+
+    def interp_dirty_uv_to_sky(self, dirty_uv):
+        '''Interp dirty uv to sky grid.
+        Parameters
+        ----------
+        dirty_uv : array_like
+            The dirty uv to be interpolated to the sky grid.
+        Returns
+        -------
+        sky_map : array_like
+            The sky map in K.
+        '''
+        #Target l , m grid (i.e. sky grid)
+        _, _, l_sky, m_sky, _, _ = self.sky_uv_coords()
+
+        #dual to hw grid 
+        l_hw = np.fft.fftshift(np.fft.fftfreq(len(self.u_hw), d=self.du))
+        m_hw = np.fft.fftshift(np.fft.fftfreq(len(self.v_hw), d=self.dv))
+
+        #interp dirty uv to sky grid
+        interp = scipy.interpolate.RegularGridInterpolator(
+            (m_hw, l_hw),   # v then u / row then col — match dirty_hw axes
+            dirty_uv,
+            method="linear",
+            bounds_error=False,
+            fill_value=0.0,
+        )
+        MM, LL = np.meshgrid(m_sky, l_sky, indexing="ij")
+        pts = np.column_stack([MM.ravel(), LL.ravel()])
+
+        nx = len(l_sky)
+        ny = len(m_sky)
+
+        sky_map = interp(pts).reshape(ny, nx)
+
+        return sky_map
+    
     def get_dirty_map(self, sky_map, freq,*args, noise = False, redundancy = True, **kwargs):
         '''Get the dirty map of the sky.
         Parameters
@@ -161,21 +314,20 @@ class fast_interferometer(object):
         dirty_map : array_like
             The dirty map of the sky in K.
         '''
-
-        uv_map = self.get_uvmap(freq)    
-        sky_fft = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(sky_map,axes=(0,1)))) * (self.dl*self.dm) #fft of sky map
-        dirty_uv = np.multiply(uv_map, sky_fft)
-
+        V_hw, uv_map = self.interp_sky_fft_to_halfwave(sky_map, freq)
+        dirty_uv = np.multiply(uv_map, V_hw)
+        npix_0 = dirty_uv.shape[0]
+        npix_1 = dirty_uv.shape[1]
         if noise:
             noise = self.compute_noise()
         
             if redundancy: 
                 redundant_noise = np.where(self.count_map !=0, noise/np.sqrt(self.count_map),0)
-                a = np.random.normal(0, redundant_noise, (self.x_npix, self.y_npix))
-                b = np.random.normal(0, redundant_noise, (self.x_npix, self.y_npix))
+                a = np.random.normal(0, redundant_noise, (npix_0, npix_1))
+                b = np.random.normal(0, redundant_noise, (npix_0, npix_1))
             else:
-                a = np.random.normal(0, noise, (self.x_npix, self.y_npix))
-                b = np.random.normal(0, noise, (self.x_npix, self.y_npix))
+                a = np.random.normal(0, noise, (npix_0, npix_1))
+                b = np.random.normal(0, noise, (npix_0, npix_1))
             
             noise_map = a + (1j*b)
             noise_map = np.where(uv_map != 0, noise_map,0)
@@ -183,8 +335,12 @@ class fast_interferometer(object):
             dirty_uv += noise_map
         else: 
             pass 
-
-        dirty_map = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(dirty_uv,axes=(0,1)))) * self.du*self.dv* (self.x_npix*self.y_npix)
+        #fft factor
+        npix_interp = len(V_hw[1]) * len(V_hw[0])
+        dirty_map = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(dirty_uv,axes=(0,1)))) * self.du*self.dv* npix_interp
+        ## Need to then crop/interp to the old sky grid.
+        dirty_map = self.interp_dirty_uv_to_sky(dirty_map)
+        
         return dirty_map.real
     
     def get_noise_map(self, freq, *args, redundancy = True, **kwargs):
