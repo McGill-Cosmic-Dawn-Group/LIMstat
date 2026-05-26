@@ -94,58 +94,6 @@ class fast_interferometer(object):
 
         return self.unique_bls
 
-    def get_uvmap_skycoords(self, freq):
-        '''Get the uv map of the interferometer. This does NOT do rotation synthesis, it is the instantaneous uv coverage.
-        Parameters
-        ----------
-        freq : float
-            The frequency of observation in MHz, GHz, etc...
-        Returns
-        -------
-        uv_map : array_like
-            The uv coverage of the interferometer.
-        '''
-        self.get_bls(freq)
-
-
-        L = np.sin(self.theta_x)
-        M = np.sin(self.theta_y)
-
-        self.u = np.fft.fftshift(np.fft.fftfreq(self.x_npix+1, d=L/(self.x_npix+1)))
-        self.v = np.fft.fftshift(np.fft.fftfreq(self.y_npix+1, d=M/(self.y_npix+1)))
-
-        self.dl = L / self.x_npix
-        self.dm = M / self.y_npix
-
-        self.du = self.u[1] - self.u[0]
-        self.dv = self.v[1] - self.v[0]
-
-        #the uv map is the mean of the baselines in each uv bin
-        binned_uv = stats.binned_statistic_2d(self.v_coords,self.u_coords, np.ones((len(self.unique_bls[:,0]))),
-                                        statistic='mean',
-                                        bins=[self.v, self.u])
-
-        # counts map is the number of baselines in each uv bin (this is from redundant baselines)
-        binned_counts = stats.binned_statistic_2d(self.v_coords,self.u_coords, self.counts,
-                                        statistic='sum',
-                                        bins=[self.v, self.u])
-        
-        # get the number of measurments per uv bin (this is from redundant baselines)
-        self.count_map = binned_counts.statistic
-        #set all nans to 0 
-        self.count_map[np.isnan(binned_counts.statistic)] = 0
-
-        uv_map = binned_uv.statistic
-        #set all nans to 0 
-        uv_map[np.isnan(binned_uv.statistic)] = 0
-
-        #make sure the cel with the (u, v)=(0,0) mode is set to 0 because interferometers don't measure the sky mean
-        DC_index_u = np.where(self.u == 0)[0][0]
-        DC_index_v = np.where(self.v == 0)[0][0]
-        uv_map[DC_index_u, DC_index_v] = 0
-
-        return uv_map
-
     def get_uvmap_halfwave(self, freq):
         # GOOD KEEP THIS
         '''Get the uv map of the interferometer. This does NOT do rotation synthesis, it is the instantaneous uv coverage.
@@ -215,7 +163,6 @@ class fast_interferometer(object):
             #set all nans to 0 
             uv_map[np.isnan(binned_uv.statistic)] = 0
 
-        
         # TODO: need to figure out transposes and whatnot. 
         elif self.array_layout == "ew_only":
             #make the binned uv map a 2D array using the v from sky_coords
@@ -253,11 +200,14 @@ class fast_interferometer(object):
         psf : array_like
             The point spread function of the interferometer.
         '''
-        uv_map = self.get_uvmap(freq)
-        psf = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(uv_map,axes=(0,1))))*(self.du*self.dv)
+        uv_map = self.get_uvmap_halfwave(freq)
+        npix_0 = uv_map.shape[0]
+        npix_1 = uv_map.shape[1]
+        psf = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(uv_map,axes=(0,1))))*(self.du*self.dv* npix_0* npix_1)
+
+        psf = self.interp_dirty_map_to_sky(psf)
         
-        return psf
-    
+        return psf.real
 
     def sky_uv_coords(self):
         #GOOD KEEP THIS
@@ -342,7 +292,7 @@ class fast_interferometer(object):
         
         return V_hw, uv_map
 
-    def interp_dirty_uv_to_sky(self, dirty_uv):
+    def interp_dirty_map_to_sky(self, dirty_map):
         '''Interp dirty uv to sky grid.
         Parameters
         ----------
@@ -363,7 +313,7 @@ class fast_interferometer(object):
         #interp dirty uv to sky grid
         interp = scipy.interpolate.RegularGridInterpolator(
             (m_hw, l_hw),   # v then u / row then col — match dirty_hw axes
-            dirty_uv,
+            dirty_map,
             method="linear",
             bounds_error=False,
             fill_value=0.0,
@@ -393,8 +343,6 @@ class fast_interferometer(object):
             The dirty map of the sky in K.
         '''
         V_hw, uv_map = self.interp_sky_fft_to_halfwave(sky_map, freq)
-        print(V_hw.shape)
-        print(uv_map.shape)
 
         dirty_uv = np.multiply(uv_map, V_hw)
         npix_0 = dirty_uv.shape[0]
@@ -420,26 +368,28 @@ class fast_interferometer(object):
         npix_interp = len(V_hw[1]) * len(V_hw[0])
         dirty_map = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(dirty_uv,axes=(0,1)))) * self.du*self.dv* npix_interp
         ## Need to then crop/interp to the old sky grid.
-        dirty_map = self.interp_dirty_uv_to_sky(dirty_map)
+        dirty_map = self.interp_dirty_map_to_sky(dirty_map)
         
         return dirty_map.real
     
     def get_noise_map(self, freq, *args, redundancy = True, **kwargs):
-        self.get_uvmap(freq)
+        uv_map = self.get_uvmap_halfwave(freq)
         noise = self.compute_noise()
+        npix_0 = uv_map.shape[0]
+        npix_1 = uv_map.shape[1]
 
         if redundancy:
             redundant_noise = np.where(self.count_map !=0, noise/np.sqrt(self.count_map),0)
-            a = np.random.normal(0, redundant_noise, (self.x_npix, self.y_npix))
-            b = np.random.normal(0, redundant_noise, (self.x_npix, self.y_npix))
+            a = np.random.normal(0, redundant_noise, (npix_0, npix_1))
+            b = np.random.normal(0, redundant_noise, (npix_0, npix_1))
         else:
-            a = np.random.normal(0, noise, (self.x_npix, self.y_npix))
-            b = np.random.normal(0, noise, (self.x_npix, self.y_npix))
+            a = np.random.normal(0, noise, (npix_0, npix_1))
+            b = np.random.normal(0, noise, (npix_0, npix_1))
 
         noise_map = (a + (1j*b))/np.sqrt(2)
       
-        position_noise_map = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(noise_map,axes=(0,1)))) * self.du*self.dv * (self.x_npix*self.y_npix)
-
+        position_noise_map = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(noise_map,axes=(0,1)))) * self.du*self.dv * npix_0* npix_1
+        position_noise_map = self.interp_dirty_map_to_sky(position_noise_map)
         return position_noise_map.real 
 
     def compute_noise(self):
