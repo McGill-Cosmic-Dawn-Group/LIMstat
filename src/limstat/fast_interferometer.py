@@ -74,68 +74,77 @@ class fast_interferometer(object):
                 bls[k] = ant_i - ant_j # this subtracts each coordinate from the other [0,0]-[1,1]
                 k += 1 #add k every time you identify a baseline 
      
-        total_bls = np.concatenate((bls,-bls)) #this is the total number of baselines
-        self.unique_bls, self.counts = np.unique(total_bls,axis=0, return_counts = True) #this is the list of unique baselines
-        
+        total_bls = np.concatenate((bls,-bls)) #this is the total number of baselines (including in the negative direction)
+
+        #make sure -0 = 0
+        total_bls = np.where(total_bls == 0, 0, total_bls)
+        #check that the total number of baselines is correct
+        if len(total_bls) != ((n_ants * (n_ants - 1))):
+            raise ValueError('The total number of baselines is not correct.')
+        else:
+            pass
+
+        self.unique_bls, self.counts = np.unique(total_bls, axis=0, return_counts = True) #this is the list of unique baselines
+
         frequency = freq.to(units.Hz).value
         lambda_ = 3e8 / frequency
+
         self.u_coords = self.unique_bls[:,0]/lambda_
         self.v_coords = self.unique_bls[:,1]/lambda_
 
         return self.unique_bls
 
+    def get_uvmap_skycoords(self, freq):
+        '''Get the uv map of the interferometer. This does NOT do rotation synthesis, it is the instantaneous uv coverage.
+        Parameters
+        ----------
+        freq : float
+            The frequency of observation in MHz, GHz, etc...
+        Returns
+        -------
+        uv_map : array_like
+            The uv coverage of the interferometer.
+        '''
+        self.get_bls(freq)
 
-    # def get_uvmap_skycoords(self, freq):
-    #     '''Get the uv map of the interferometer. This does NOT do rotation synthesis, it is the instantaneous uv coverage.
-    #     Parameters
-    #     ----------
-    #     freq : float
-    #         The frequency of observation in MHz, GHz, etc...
-    #     Returns
-    #     -------
-    #     uv_map : array_like
-    #         The uv coverage of the interferometer.
-    #     '''
-    #     self.get_bls(freq)
 
+        L = np.sin(self.theta_x)
+        M = np.sin(self.theta_y)
 
-    #     L = np.sin(self.theta_x)
-    #     M = np.sin(self.theta_y)
+        self.u = np.fft.fftshift(np.fft.fftfreq(self.x_npix+1, d=L/(self.x_npix+1)))
+        self.v = np.fft.fftshift(np.fft.fftfreq(self.y_npix+1, d=M/(self.y_npix+1)))
 
-    #     self.u = np.fft.fftshift(np.fft.fftfreq(self.x_npix+1, d=L/(self.x_npix+1)))
-    #     self.v = np.fft.fftshift(np.fft.fftfreq(self.y_npix+1, d=M/(self.y_npix+1)))
+        self.dl = L / self.x_npix
+        self.dm = M / self.y_npix
 
-    #     self.dl = L / self.x_npix
-    #     self.dm = M / self.y_npix
+        self.du = self.u[1] - self.u[0]
+        self.dv = self.v[1] - self.v[0]
 
-    #     self.du = self.u[1] - self.u[0]
-    #     self.dv = self.v[1] - self.v[0]
+        #the uv map is the mean of the baselines in each uv bin
+        binned_uv = stats.binned_statistic_2d(self.v_coords,self.u_coords, np.ones((len(self.unique_bls[:,0]))),
+                                        statistic='mean',
+                                        bins=[self.v, self.u])
 
-    #     #the uv map is the mean of the baselines in each uv bin
-    #     binned_uv = stats.binned_statistic_2d(self.v_coords,self.u_coords, np.ones((len(self.unique_bls[:,0]))),
-    #                                     statistic='mean',
-    #                                     bins=[self.v, self.u])
-
-    #     # counts map is the number of baselines in each uv bin (this is from redundant baselines)
-    #     binned_counts = stats.binned_statistic_2d(self.v_coords,self.u_coords, self.counts,
-    #                                     statistic='sum',
-    #                                     bins=[self.v, self.u])
+        # counts map is the number of baselines in each uv bin (this is from redundant baselines)
+        binned_counts = stats.binned_statistic_2d(self.v_coords,self.u_coords, self.counts,
+                                        statistic='sum',
+                                        bins=[self.v, self.u])
         
-    #     # get the number of measurments per uv bin (this is from redundant baselines)
-    #     self.count_map = binned_counts.statistic
-    #     #set all nans to 0 
-    #     self.count_map[np.isnan(binned_counts.statistic)] = 0
+        # get the number of measurments per uv bin (this is from redundant baselines)
+        self.count_map = binned_counts.statistic
+        #set all nans to 0 
+        self.count_map[np.isnan(binned_counts.statistic)] = 0
 
-    #     uv_map = binned_uv.statistic
-    #     #set all nans to 0 
-    #     uv_map[np.isnan(binned_uv.statistic)] = 0
+        uv_map = binned_uv.statistic
+        #set all nans to 0 
+        uv_map[np.isnan(binned_uv.statistic)] = 0
 
-    #     #make sure the cel with the (u, v)=(0,0) mode is set to 0 because interferometers don't measure the sky mean
-    #     DC_index_u = np.where(self.u == 0)[0][0]
-    #     DC_index_v = np.where(self.v == 0)[0][0]
-    #     uv_map[DC_index_u, DC_index_v] = 0
+        #make sure the cel with the (u, v)=(0,0) mode is set to 0 because interferometers don't measure the sky mean
+        DC_index_u = np.where(self.u == 0)[0][0]
+        DC_index_v = np.where(self.v == 0)[0][0]
+        uv_map[DC_index_u, DC_index_v] = 0
 
-    #     return uv_map
+        return uv_map
 
     def get_uvmap_halfwave(self, freq):
         # GOOD KEEP THIS
@@ -152,25 +161,85 @@ class fast_interferometer(object):
         self.get_bls(freq)
         self.du = 0.5
         self.dv = 0.5
-        self.u_grid = np.arange(-self.u_coords.max(),self.u_coords.max(),self.du)
-        self.v_grid = np.arange(-self.v_coords.max(),self.v_coords.max(),self.dv)
-
-        binned_uv = stats.binned_statistic_2d(self.v_coords,self.u_coords, np.ones((len(self.unique_bls[:,0]))),
-                                        statistic='mean',
-                                        bins=[self.v_grid, self.u_grid])
-
-        binned_counts = stats.binned_statistic_2d(self.v_coords,self.u_coords, self.counts,
-                                        statistic='sum',
-                                        bins=[self.v_grid, self.u_grid])
+        self.u_grid = np.arange(-self.u_coords.max(),self.u_coords.max()+self.du,self.du)
+        self.v_grid = np.arange(-self.v_coords.max(),self.v_coords.max()+self.dv,self.dv)
         
-        # get the number of measurments per uv bin (this is from redundant baselines)
-        self.count_map = binned_counts.statistic
-        #set all nans to 0 
-        self.count_map[np.isnan(binned_counts.statistic)] = 0
+        length_v = len(self.v_grid)
+        length_u = len(self.u_grid)
+        
+        if length_u <=1:
+            self.array_layout = "ns_only"
+        elif length_v <=1:
+            self.array_layout = "ew_only"
+        else:
+            self.array_layout = "2d"
+            
+        if self.array_layout == "2d":
+            binned_uv = stats.binned_statistic_2d(self.v_coords,self.u_coords, np.ones((len(self.unique_bls[:,0]))),
+                                            statistic='mean',
+                                            bins=[self.v_grid, self.u_grid])
 
-        uv_map = binned_uv.statistic
-        #set all nans to 0 
-        uv_map[np.isnan(binned_uv.statistic)] = 0
+            binned_counts = stats.binned_statistic_2d(self.v_coords,self.u_coords, self.counts,
+                                            statistic='sum',
+                                            bins=[self.v_grid, self.u_grid])
+            
+            # get the number of measurments per uv bin (this is from redundant baselines)
+            self.count_map = binned_counts.statistic
+            #set all nans to 0 
+            self.count_map[np.isnan(binned_counts.statistic)] = 0
+
+            uv_map = binned_uv.statistic
+            #set all nans to 0 
+            uv_map[np.isnan(binned_uv.statistic)] = 0
+            
+            print(uv_map.shape)
+
+        if self.array_layout == "ns_only":
+            #make the binned uv map a 2D array using the u from sky_coords
+            u,_,_,_,_,_, = self.sky_uv_coords()
+        
+            binned_uv = stats.binned_statistic_2d(self.v_coords,self.u_coords, np.ones((len(self.unique_bls[:,0]))),
+                                statistic='mean',
+                                bins=[self.v_grid, u])
+            
+            binned_counts = stats.binned_statistic_2d(self.v_coords,self.u_coords, self.counts,
+                                            statistic='sum',
+                                            bins=[self.v_grid, u])
+            
+            # get the number of measurments per uv bin (this is from redundant baselines)
+            self.count_map = binned_counts.statistic
+            #set all nans to 0 
+            self.count_map[np.isnan(binned_counts.statistic)] = 0
+
+            uv_map = binned_uv.statistic
+            #set all nans to 0 
+            uv_map[np.isnan(binned_uv.statistic)] = 0
+
+        
+        # TODO: need to figure out transposes and whatnot. 
+        elif self.array_layout == "ew_only":
+            #make the binned uv map a 2D array using the v from sky_coords
+            _,v,_,_,_,_, = self.sky_uv_coords()
+            binned_uv = stats.binned_statistic_2d(self.v_coords,self.u_coords, np.ones((len(self.unique_bls[:,0]))),
+                                statistic='mean',
+                                bins=[v, self.u_grid])
+            
+            binned_counts = stats.binned_statistic_2d(self.v_coords,self.u_coords, self.counts,
+                                            statistic='sum',
+                                            bins=[v, self.u_grid])
+            
+            # get the number of measurments per uv bin (this is from redundant baselines)
+            self.count_map = binned_counts.statistic
+            #set all nans to 0 
+            self.count_map[np.isnan(binned_counts.statistic)] = 0
+
+            uv_map = binned_uv.statistic
+            #set all nans to 0 
+            uv_map[np.isnan(binned_uv.statistic)] = 0
+
+        else:
+            pass
+        
         return uv_map
         
     def get_psf(self, freq):
@@ -240,9 +309,18 @@ class fast_interferometer(object):
         u_nat, v_nat, _, _, _,_= self.sky_uv_coords()
 
         # Targets tied to self.u_grid / self.v_grid (same bins as uv_map)
-        self.u_hw = 0.5 * (self.u_grid[:-1] + self.u_grid[1:])
-        self.v_hw = 0.5 * (self.v_grid[:-1] + self.v_grid[1:])
-    
+        if self.array_layout == "2d":
+            self.u_hw = 0.5 * (self.u_grid[:-1] + self.u_grid[1:])
+            self.v_hw = 0.5 * (self.v_grid[:-1] + self.v_grid[1:])
+        
+        elif self.array_layout == "ns_only":
+            self.u_hw = u_nat[:-1]
+            self.v_hw = 0.5 * (self.v_grid[:-1] + self.v_grid[1:])
+        elif self.array_layout == "ew_only":
+            self.u_hw = 0.5 * (self.u_grid[:-1] + self.u_grid[1:])
+            self.v_hw = v_nat[:-1]
+        else:
+            pass
 
         interp_re = scipy.interpolate.RegularGridInterpolator(
             (v_nat, u_nat),
@@ -315,6 +393,9 @@ class fast_interferometer(object):
             The dirty map of the sky in K.
         '''
         V_hw, uv_map = self.interp_sky_fft_to_halfwave(sky_map, freq)
+        print(V_hw.shape)
+        print(uv_map.shape)
+
         dirty_uv = np.multiply(uv_map, V_hw)
         npix_0 = dirty_uv.shape[0]
         npix_1 = dirty_uv.shape[1]
