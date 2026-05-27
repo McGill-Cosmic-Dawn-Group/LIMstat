@@ -170,3 +170,52 @@ def test_custom_uv_both_args_raises(freq):
             N_uv=(u_grid, v_grid, count_map),
             custom_uv={'u_grid': u_grid, 'v_grid': v_grid, 'N': count_map},
         )
+
+
+def test_get_dirty_cube():
+    npix = 32
+    n_freq = 4
+    inst = _make_instrument(_grid_ants(), npix=npix)
+    freqs = np.linspace(140, 160, n_freq) * units.MHz
+
+    sky_cube = np.zeros((npix, npix, n_freq))
+    for i in range(n_freq):
+        sky_cube[:, :, i] = _delta_sky(npix, amp=1.0 + 0.1 * i)
+
+    dirty_cube = inst.get_dirty_cube(sky_cube, freqs, noise=False)
+
+    assert dirty_cube.shape == (npix, npix, n_freq)
+    assert np.isfinite(dirty_cube).all()
+    assert np.abs(dirty_cube[:, :, 0] - dirty_cube[:, :, 1]).max() > 0
+
+
+def test_get_dirty_cube_custom_uv_list():
+    npix = 32
+    n_freq = 2
+    inst = _make_instrument(_grid_ants(n_ants=6), npix=npix)
+    freqs = np.array([140.0, 160.0]) * units.MHz
+
+    u0, v0, n0 = _synthetic_custom_uv()
+    u1, v1, n1 = _synthetic_custom_uv(nu=11, nv=11)
+    N_uv_list = [(u0, v0, n0), (u1, v1, n1)]
+
+    sky_cube = np.stack([_delta_sky(npix), _delta_sky(npix)], axis=2)
+    inst.get_dirty_cube(sky_cube, freqs, N_uv=N_uv_list)
+
+    inst.get_uvmap_halfwave(freqs[1], N_uv=N_uv_list[1])
+    assert np.allclose(inst.count_map, n1)
+
+
+def test_get_dirty_cube_N_uv_and_custom_uv_raises():
+    npix = 32
+    inst = _make_instrument(_grid_ants(n_ants=6), npix=npix)
+    freqs = np.array([150.0, 155.0]) * units.MHz
+    u, v, n = _synthetic_custom_uv()
+    sky_cube = np.stack([_delta_sky(npix), _delta_sky(npix)], axis=2)
+    with pytest.raises(ValueError, match='only one'):
+        inst.get_dirty_cube(
+            sky_cube,
+            freqs,
+            N_uv=[(u, v, n), (u, v, n)],
+            custom_uv=[{'u_grid': u, 'v_grid': v, 'N': n}] * 2,
+        )

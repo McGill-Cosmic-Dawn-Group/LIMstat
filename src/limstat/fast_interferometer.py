@@ -431,6 +431,94 @@ class fast_interferometer(object):
 
         return dirty_map.real
 
+    def _validate_per_channel_uv(self, n_freq, N_uv=None, custom_uv=None):
+        if N_uv is not None and custom_uv is not None:
+            raise ValueError(
+                'Pass only one of N_uv or custom_uv for cube imaging, not both.',
+            )
+        if N_uv is not None and len(N_uv) != n_freq:
+            raise ValueError(
+                f'N_uv must have length {n_freq} (one entry per frequency channel).',
+            )
+        if custom_uv is not None and len(custom_uv) != n_freq:
+            raise ValueError(
+                f'custom_uv must have length {n_freq} (one entry per channel).',
+            )
+
+    def get_dirty_cube(
+        self,
+        sky_cube,
+        freqs,
+        noise=False,
+        redundancy=True,
+        N_uv=None,
+        custom_uv=None,
+    ):
+        """
+        Image a multi-frequency sky cube by calling ``get_dirty_map`` per channel.
+
+        Parameters
+        ----------
+        sky_cube : array_like
+            Shape ``(y_npix, x_npix, n_freq)`` in K; frequency on the last axis.
+        freqs : array_like
+            Observing frequency per channel (astropy Quantity), length ``n_freq``.
+        noise : bool
+            If True, add independent thermal noise per channel (requires
+            ``T_sys``, ``t_obs``, ``bandwidth`` on the instrument).
+        redundancy : bool
+            Scale noise by ``sqrt(count_map)`` per UV bin when True.
+        N_uv : sequence, optional
+            Length ``n_freq``; each element is ``(u_grid, v_grid, count_map)``.
+        custom_uv : sequence, optional
+            Length ``n_freq``; each element is a dict for ``get_dirty_map``.
+
+        Returns
+        -------
+        dirty_cube : ndarray
+            Shape ``(y_npix, x_npix, n_freq)``.
+
+        Notes
+        -----
+        UV coverage and gridding are recomputed at each frequency (antenna path).
+        After the call, ``self`` retains the UV state from the **last** channel.
+        Set ``bandwidth`` to the per-channel value if channels are independent.
+        """
+        sky_cube = np.asarray(sky_cube, dtype=float)
+        if sky_cube.ndim != 3:
+            raise ValueError(
+                'sky_cube must be 3D with shape (y_npix, x_npix, n_freq).',
+            )
+        if sky_cube.shape[:2] != (self.y_npix, self.x_npix):
+            raise ValueError(
+                f'sky_cube spatial shape {sky_cube.shape[:2]} must match '
+                f'(y_npix, x_npix) = ({self.y_npix}, {self.x_npix}).',
+            )
+
+        freqs = np.atleast_1d(freqs)
+        n_freq = sky_cube.shape[2]
+        if len(freqs) != n_freq:
+            raise ValueError(
+                f'len(freqs)={len(freqs)} must match n_freq={n_freq}.',
+            )
+
+        self._validate_per_channel_uv(n_freq, N_uv=N_uv, custom_uv=custom_uv)
+
+        dirty_cube = np.empty_like(sky_cube)
+        for i in range(n_freq):
+            n_uv_i = N_uv[i] if N_uv is not None else None
+            custom_i = custom_uv[i] if custom_uv is not None else None
+            dirty_cube[:, :, i] = self.get_dirty_map(
+                sky_cube[:, :, i],
+                freqs[i],
+                noise=noise,
+                redundancy=redundancy,
+                N_uv=n_uv_i,
+                custom_uv=custom_i,
+            )
+
+        return dirty_cube
+
     def get_noise_map(
         self, freq, redundancy=True, N_uv=None, custom_uv=None,
     ):
