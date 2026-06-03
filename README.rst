@@ -94,9 +94,11 @@ Package Overview
 
 ``limstat.instruments`` and ``limstat.fast_interferometer``
     Provide simple instrumental response models. ``single_dish_instrument``
-    convolves sky cubes with a diffraction-limited Gaussian beam, while
-    ``fast_interferometer`` builds baseline, uv-coverage, PSF, dirty-map, and
-    noise realizations from antenna positions.
+    convolves sky cubes with a diffraction-limited Gaussian beam.
+    ``fast_interferometer`` simulates interferometric imaging from antenna
+    positions: baseline geometry, half-wave UV gridding, redundant-baseline
+    counting, dirty maps, PSFs, thermal noise, optional user-supplied UV count
+    maps, and multi-frequency dirty cubes.
 
 ``limstat.power_spectrum``
     Estimates auto- and cross-power spectra from 3D cubes. It supports direct
@@ -191,6 +193,59 @@ decorrelation formalism used in the accompanying publication.
    cross_cube = cross.FFT_crossxy()
    k_cross, p_cross = cross.compute_1D_pspec(ps_data=cross_cube)
 
+Interferometer imaging
+======================
+
+``limstat.fast_interferometer`` maps sky models through a UV-domain pipeline
+(instantaneous uv coverage, no rotation synthesis). Sky maps must have shape
+``(y_npix, x_npix)`` matching the instrument constructor. Set ``T_sys``,
+``t_obs``, and ``bandwidth`` for noise.
+
+Typical workflow:
+
+* ``get_bls(freq)`` — baseline vectors and wavelength-scaled ``u``, ``v``
+* ``get_uvmap_halfwave(freq)`` — grid coverage on a half-wave lattice
+  (``du = dv = 0.5``); stores ``count_map`` for redundant baselines
+* ``get_dirty_map(sky_map, freq)`` — noiseless or noisy dirty map on the sky grid
+* ``get_psf(freq)`` — dirty beam (PSF)
+* ``get_dirty_cube(sky_cube, freqs)`` — image a cube with frequency on the
+  **last** axis ``(y_npix, x_npix, n_freq)``, recomputing UV coverage at each
+  channel
+
+**Custom UV.** Supply bin edges and a per-bin count map ``N`` instead of
+antenna binning. Coverage is derived automatically as a binary mask
+(``uv_map = 1`` where ``N > 0``). Pass either a tuple or a dict:
+
+.. code-block:: python
+
+   from limstat.fast_interferometer import fast_interferometer
+
+   inst = fast_interferometer(
+       ant_locs=ant_locs,
+       theta_x=fov,
+       theta_y=fov,
+       x_npix=npix,
+       y_npix=npix,
+       T_sys=200 * units.K,
+       t_obs=1000 * units.hr,
+       bandwidth=8 * units.MHz,
+   )
+
+   freq = 150 * units.MHz
+   dirty = inst.get_dirty_map(true_sky, freq, noise=False)
+
+   # User count map N on a UV grid (u_grid, v_grid are bin edges in wavelengths)
+   N_uv = (u_grid, v_grid, count_map)
+   dirty = inst.get_dirty_map(true_sky, freq, N_uv=N_uv)
+
+   # Multi-frequency cube: UV coverage updates each channel (u = b nu / c)
+   freqs = np.linspace(140, 160, 10) * units.MHz
+   sky_cube = np.stack([true_sky] * len(freqs), axis=2)
+   dirty_cube = inst.get_dirty_cube(sky_cube, freqs, noise=True, redundancy=True)
+
+1D array layouts (east–west or north–south only) are detected automatically
+(``array_layout`` of ``'ew_only'`` or ``'ns_only'``).
+
 Tutorials
 =========
 
@@ -202,6 +257,11 @@ Worked examples live in the ``tutorials`` directory. The primary tutorial,
 * comparing recovered and input power spectra;
 * generating two correlated LIM fields;
 * estimating auto- and cross-power spectra.
+
+``tutorial_interferometer.ipynb`` demonstrates ``fast_interferometer`` end to
+end: antenna layouts, half-wave UV maps, dirty maps, PSFs, thermal noise,
+custom ``N_uv`` injection, multi-frequency ``get_dirty_cube``, and 1D
+east–west / north–south fringe examples.
 
 The ``Testing 3D Pspec + Window.ipynb`` notebook is an exploratory notebook for
 3D power-spectrum and window-function calculations.
@@ -228,7 +288,7 @@ Development Status
 
 ``limstat`` is research software under active development. The code is most
 mature for Gaussian signal simulations, correlated fields, thermal-noise
-realizations, and power-spectrum estimation. Some instrument, foreground, and
-window-function tools are still evolving and should be validated for a given
-science analysis.
+realizations, power-spectrum estimation, and ``fast_interferometer`` dirty-map
+imaging. Some foreground and window-function tools are still evolving and
+should be validated for a given science analysis.
 
