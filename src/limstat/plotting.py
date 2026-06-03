@@ -53,12 +53,7 @@ def plot_ps2d(
     kpara_bins = np.atleast_1d(kpara_bins)
     assert np.shape(pspec_2d) == (kpara_bins.size, kperp_bins.size), \
         "Input pspec must have shape (kperp_bins.size, kpara_bins.size)."
-    if np.any(pspec_2d < 0):
-        warnings.warn(
-            'There are negative values in your pspec. '
-            'Absolute value will be used for the figure.'
-        )
-        pspec_2d = np.abs(pspec_2d)
+
     if little_h:
         h = 'h'
     else:

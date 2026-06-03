@@ -387,6 +387,7 @@ class fast_interferometer(object):
             b = np.random.normal(0, scale, shape)
 
         noise_map = a + 1j * b
+        # really need this renormalization because of the way the noise is drawn twice for real and imaginary components. 
         if normalize_sqrt2:
             noise_map /= np.sqrt(2)
         return np.where(uv_map != 0, noise_map, 0)

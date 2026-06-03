@@ -120,7 +120,6 @@ class cosmological_signal(object):
 		if np.any(np.abs(rbox) > 1) == True:
 			raise ValueError('r(k) must be between -1 and 1.')
 
-
 		sigma_box = np.zeros_like(rbox)
 		sigma_box = np.where(rbox == 0, 100*np.pi, 0.)
 
@@ -199,6 +198,18 @@ class cosmological_signal(object):
 		# here's the box that will hold the random gaussian things
 		means = np.zeros(self.kbox.shape)
 		widths = np.sqrt(powerbox*0.5)  # sqrt(mk2 mpc6)= mk mpc3
+
+		# --- fix: irfftn discards the imaginary part of the last-axis self-conjugate
+		# planes, halving their variance. Boost sigma by sqrt(2) there so the surviving
+		# real component carries the full power. After ifftshift, the DC plane sits at
+		# centered index Nz//2 and the Nyquist plane at centered index 0.
+		Nz = self.z_npix
+		widths[:, :, Nz // 2] *= np.sqrt(2)          # last-axis DC plane
+		if Nz % 2 == 0:
+			widths[:, :, 0] *= np.sqrt(2)            # last-axis Nyquist plane (even Nz only)
+		# # ---
+
+
 		a, b = np.random.normal(
 			means,
 			widths,
@@ -840,7 +851,6 @@ class CO_interlopers:
 		return lum_box * units.uK
 	
 	#maybe add a function to generate an intensity cube for one line of interest
-
 	
 
 class thermal_noise:
