@@ -209,7 +209,6 @@ class cosmological_signal(object):
 			widths[:, :, 0] *= np.sqrt(2)            # last-axis Nyquist plane (even Nz only)
 		# # ---
 
-
 		a, b = np.random.normal(
 			means,
 			widths,
