@@ -37,7 +37,7 @@ class fast_interferometer(object):
         t_obs : Quantity, optional
             Observation time (required for noise).
         bandwidth : Quantity, optional
-            Bandwidth in Hz (required for noise).
+            Bandwidth of the input map in Hz (required for noise).
         """
         self.ants = ant_locs.to(units.m).value
         self.theta_x = theta_x.to(units.rad).value
@@ -83,6 +83,8 @@ class fast_interferometer(object):
 
     def _bin_uv_map(self, v_bins, u_bins):
         """Bin baseline u,v onto grid edges; binned_statistic_2d x=v, y=u."""
+
+        ######this non-uniform weighting is never used ############
         weights = np.ones(len(self.u_coords))
         binned_uv = stats.binned_statistic_2d(
             self.v_coords,
@@ -91,6 +93,9 @@ class fast_interferometer(object):
             statistic='mean',
             bins=[v_bins, u_bins],
         )
+        ############################################################
+
+        #this is the uniform weighting that is used throughout the code
         binned_counts = stats.binned_statistic_2d(
             self.v_coords,
             self.u_coords,
@@ -111,9 +116,9 @@ class fast_interferometer(object):
             else: 
                 pass
 
-
         self.count_map = _nan_to_zero(binned_counts.statistic)
-        return _nan_to_zero(binned_uv.statistic)
+        # old: return _nan_to_zero(binned_uv.statistic)
+        return self.count_map # Leon wants natural weighting counts.
 
     def _parse_custom_uv(self, N_uv=None, custom_uv=None):
         """Return (u_grid, v_grid, count_map) or None if using antenna binning."""
@@ -181,8 +186,9 @@ class fast_interferometer(object):
             self.array_layout = 'ew_only'
         else:
             self.array_layout = '2d'
-
-        uv_map = np.where(self.count_map > 0, 1.0, 0.0)
+        #TODO Leon claims the uv_map here should be the count_map, not the uv_map.
+        # Old uv_map = np.where(self.count_map > 0, 1.0, 0.0)
+        uv_map = self.count_map
 
         u_nat, v_nat, _, _, _, _ = self.sky_uv_coords()
         self._set_halfwave_uv_centers(u_nat, v_nat)
@@ -240,8 +246,11 @@ class fast_interferometer(object):
 
         return uv_map
 
-    def get_psf(self, freq, N_uv=None, custom_uv=None):
+    def get_psf(self, freq, N_uv=None, custom_uv=None, peak_normalize=False):
         """Point spread function (dirty beam) on the sky pixel grid."""
+        #TODO Leon claims the uv_map here should be the count_map, not the uv_map.
+        # It should be peak noramlized to 1
+
         uv_map = self.get_uvmap_halfwave(freq, N_uv=N_uv, custom_uv=custom_uv)
         u_nat, v_nat, _, _, _, _ = self.sky_uv_coords()
         self._set_halfwave_uv_centers(u_nat, v_nat)
@@ -252,6 +261,11 @@ class fast_interferometer(object):
             * (self.du * self.dv * npix_0 * npix_1)
         )
         psf = self.interp_dirty_map_to_sky(psf)
+        # # peak normalize the psf to 1
+        if peak_normalize == True:
+            psf /= np.nanmax(psf)
+        else:
+            pass
         return psf.real
 
     def sky_uv_coords(self):
@@ -302,7 +316,7 @@ class fast_interferometer(object):
         custom_uv=None,
         method='linear',
         fill_value=0.0,
-    ):
+        ):
         """
         Interpolate model visibilities onto the half-wave grid from get_uvmap_halfwave.
 
@@ -377,7 +391,7 @@ class fast_interferometer(object):
             return scale
         return noise_level
 
-    def _draw_uv_noise(self, shape, uv_map, redundancy, normalize_sqrt2=False):
+    def _draw_uv_noise(self, shape, uv_map, redundancy, normalize_sqrt2=True):
         scale = self._uv_noise_scale(redundancy)
         if redundancy:
             a = np.random.normal(0, scale, shape)
@@ -400,7 +414,7 @@ class fast_interferometer(object):
         redundancy=True,
         N_uv=None,
         custom_uv=None,
-    ):
+        ):
         """
         Dirty map on the sky grid; optional thermal noise in the UV plane.
 
@@ -416,7 +430,6 @@ class fast_interferometer(object):
             freq, N_uv=N_uv, custom_uv=custom_uv,
         )
         V_hw, _ = self.interp_sky_fft_to_halfwave(sky_map, freq, uv_map=uv_map)
-
         dirty_uv = uv_map * V_hw
         if noise:
             dirty_uv += self._draw_uv_noise(
@@ -428,7 +441,11 @@ class fast_interferometer(object):
             np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(dirty_uv, axes=(0, 1))))
             * self.du * self.dv * npix_interp
         )
+
         dirty_map = self.interp_dirty_map_to_sky(dirty_map)
+        # peak normalize the dirty map to 1
+        psf = self.get_psf(freq, peak_normalize=False)
+        dirty_map /= np.nanmax(psf)
 
         return dirty_map.real
 
@@ -454,7 +471,7 @@ class fast_interferometer(object):
         redundancy=True,
         N_uv=None,
         custom_uv=None,
-    ):
+        ):
         """
         Image a multi-frequency sky cube by calling ``get_dirty_map`` per channel.
 
@@ -522,7 +539,7 @@ class fast_interferometer(object):
 
     def get_noise_map(
         self, freq, redundancy=True, N_uv=None, custom_uv=None,
-    ):
+        ):
         """Noise-only image realization on the sky grid."""
         uv_map = self.get_uvmap_halfwave(
             freq, N_uv=N_uv, custom_uv=custom_uv,
