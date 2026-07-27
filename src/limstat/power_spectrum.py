@@ -195,6 +195,7 @@ class power_spectrum(object):
 
         # checks on PSF
         if PSF is not None:
+            warnings.warn('This is assumed to be the PSF for auto-spectra.')
             self.PSF = np.copy(PSF)
             if np.shape(self.PSF) != np.shape(self.data):
                 raise ValueError(
@@ -208,11 +209,10 @@ class power_spectrum(object):
                 self.PSF = self.PSF.value
             # normalise
             fft_psf = np.fft.fftn(
-                self.PSF/np.sum(self.PSF, axis=(0, 1)),
+                self.PSF,
                 axes=(0, 1)
             ) 
             self.norm_map = (fft_psf * np.conj(fft_psf)).real
-            # self.PSF /= np.sqrt(self.norm_map[..., None])
             if not np.allclose(self.taper, 1.):
                 raise NotImplementedError('PSF-normalisation with tapering '
                                           'not properly implemented yet')
