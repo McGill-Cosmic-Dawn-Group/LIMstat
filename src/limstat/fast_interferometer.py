@@ -430,18 +430,19 @@ class fast_interferometer(object):
             freq, N_uv=N_uv, custom_uv=custom_uv,
         )
         V_hw, _ = self.interp_sky_fft_to_halfwave(sky_map, freq, uv_map=uv_map)
-        dirty_uv = uv_map * V_hw
         if noise:
-            dirty_uv += self._draw_uv_noise(
-                dirty_uv.shape, uv_map, redundancy, normalize_sqrt2=False,
+            noise = self._draw_uv_noise(
+                uv_map.shape, uv_map, redundancy, normalize_sqrt2=False,
             )
-
+            dirty_uv = uv_map * (V_hw + noise) # noise and signal have the same natural weighting so they will have the same power spectrum transfer function down the line. 
+        else:
+            dirty_uv = uv_map * V_hw
+       
         npix_interp = V_hw.shape[0] * V_hw.shape[1]
         dirty_map = (
             np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(dirty_uv, axes=(0, 1))))
             * self.du * self.dv * npix_interp
         )
-
         dirty_map = self.interp_dirty_map_to_sky(dirty_map)
         # peak normalize the dirty map to 1
         psf = self.get_psf(freq, peak_normalize=False)
@@ -551,12 +552,17 @@ class fast_interferometer(object):
             uv_map.shape, uv_map, redundancy, normalize_sqrt2=True,
         )
 
+        noise_map *= uv_map # add natural weighting to the noise map
+
         npix_0, npix_1 = uv_map.shape
         position_noise_map = (
             np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(noise_map, axes=(0, 1))))
             * self.du * self.dv * npix_0 * npix_1
         )
         position_noise_map = self.interp_dirty_map_to_sky(position_noise_map)
+
+        psf = self.get_psf(freq, peak_normalize=False)
+        position_noise_map /= np.nanmax(psf) # peak normalize the noise map to the same level as the dirty map
         return position_noise_map.real
 
     def compute_noise(self):
