@@ -279,9 +279,9 @@ class foregrounds:
 
 		if use_pygsm:
 			try:
-				import pygsm
+				import pygdsm
 			except ModuleNotFoundError:
-				warnings.warn('You do not have pygsm installed.'
+				warnings.warn('You do not have pygdsm installed.'
 							  'Setting pygsm to False.')
 				use_pygsm = False
 
@@ -303,20 +303,14 @@ class foregrounds:
 		self.npix = int(npix)
 		self.fov = (self.npix * self.ang_res).to(units.deg)
 
-		# Beam area
+		# Beam area. comply_units already returns a Quantity in steradians.
 		if beam_area is not None:
 			beam_area = utils.comply_units(
 				value=beam_area,
 				default_unit=units.sr,
 				quantity="beam_area",
 				desired_unit=units.sr,
-			) * units.sr
-		elif convert_data_to is not None:
-			if ((data.unit.is_equivalent(units.mK) and
-			   convert_data_to.is_equivalent(units.Jy/units.beam)) or
-			   (data.unit.is_equivalent(units.Jy/units.beam) and
-			   convert_data_to.is_equivalent(units.mK))):
-				raise ValueError('Missing beam_area to convert data!')
+			)
 		self.beam_area = getattr(beam_area, "value", beam_area)
 
 		self.Jy_to_K = units.brightness_temperature(
@@ -537,15 +531,15 @@ class foregrounds:
 		if self.use_pygsm:
 			try:
 				if self.pygsm_year == '2016':
-					from pygsm import GlobalSkyModel2016
+					from pygdsm import GlobalSkyModel16
 				elif self.pygsm_year == '2008':
-					from pygsm import GlobalSkyModel
+					from pygdsm import GlobalSkyModel
 
 			except ModuleNotFoundError:
 				raise ValueError('Cannot set use pyGSM if the module '
 								 'is not installed.')
 			if self.pygsm_year == '2016':
-				gsm = GlobalSkyModel2016(
+				gsm = GlobalSkyModel16(
 					freq_unit='MHz',
 					data_unit='TCMB',
 					resolution='hi',
@@ -952,7 +946,7 @@ class thermal_noise:
 				default_unit=units.sr,
 				quantity="beam_area",
 				desired_unit=units.sr,
-			) * units.sr
+			)
 			self.Jy_to_K = units.brightness_temperature(
 				self.freqs, self.beam_area
 			)
