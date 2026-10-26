@@ -28,6 +28,7 @@ class power_spectrum(object):
         convert_data_to=None,
         beam_area=None,
         PSF=None,
+        PSF_2=None,
         verbose=False,
     ):
         """
@@ -65,6 +66,10 @@ class power_spectrum(object):
             PSF: array of floats
                 Point-spread function of the telescope.
                 Should have no unit and same shape as data.
+            PSF_2: array of floats
+                Point-spread function of the telescope for the second data set.
+                Should have no unit and same shape as data2.
+                Default is None.
             verbose: bool
                 Whether to output messages when running functions.
         """
@@ -207,20 +212,46 @@ class power_spectrum(object):
                 warnings.warn('Assuming PSF has unit 1.',
                               stacklevel=2)
                 self.PSF = self.PSF.value
+            
             # normalise
             fft_psf = np.fft.fftn(
                 self.PSF,
                 axes=(0, 1)
             ) 
+        
             self.norm_map = (fft_psf * np.conj(fft_psf)).real
             if not np.allclose(self.taper, 1.):
-                raise NotImplementedError('PSF-normalisation with tapering '
-                                          'not properly implemented yet')
+                raise NotImplementedError('PSF-normalisation with tapering not properly implemented yet')
         else:
             self.PSF = None
             # FT of Dirac delta function
             self.norm_map = np.ones((self.x_npix, self.y_npix))[..., None]
 
+        if PSF_2 is not None:
+            warnings.warn('This is assumed to be the PSF for auto-spectra.')
+            self.PSF_2 = np.copy(PSF_2)
+            if np.shape(self.PSF_2) != np.shape(self.data2):
+                raise ValueError(
+                    "PSF_2 must have same shape as data2. Right now, "
+                    f"PSF_2 has shape {np.shape(self.PSF_2)} "
+                    f"vs. {np.shape(self.data2)}"
+                    )
+            if hasattr(self.PSF_2, "unit"):
+                warnings.warn('Assuming PSF_2 has unit 1.',
+                              stacklevel=2)
+                self.PSF_2 = self.PSF_2.value
+            
+            # normalise
+            fft_psf_2 = np.fft.fftn(
+                self.PSF_2,
+                axes=(0, 1)
+            )
+            self.norm_map_cross = (fft_psf * np.conj(fft_psf_2)).real
+            if not np.allclose(self.taper, 1.):
+                raise NotImplementedError('PSF-normalisation with tapering not properly implemented yet')
+        else:
+            self.PSF_2 = None
+            self.norm_map_cross = np.ones((self.x_npix, self.y_npix))[..., None]
 
     def take_ft(self, data, axes=None):
         """
@@ -322,7 +353,8 @@ class power_spectrum(object):
             print('taper norm:', taper_norm)
         return np.real(
             np.conj(fft_data) * fft_data
-        ) / (self.cosmo_volume * taper_norm) / self.norm_map * self.pk_unit
+        ) / (self.cosmo_volume * taper_norm) /  self.norm_map * self.pk_unit
+
 
     def FFT_crossxy(self):
         """
@@ -364,9 +396,9 @@ class power_spectrum(object):
 
         return np.real(
             np.conj(fft_data1) * fft_data2
-        ) / (self.cosmo_volume * taper_norm) / self.norm_map * self.pk_unit # mK^2 Mpc^3
-
+        ) / (self.cosmo_volume * taper_norm) / self.norm_map_cross * self.pk_unit # mK^2 Mpc^3
     
+
     def compute_k_modes(self):
         """Define observational Fourier axes."""
         # TODO: just make these all class properties and remove this function
@@ -384,16 +416,14 @@ class power_spectrum(object):
         self.k_par = np.fft.fftfreq(self.z_npix, d=self.delta_z)  
             #)# 1/Mpc
         self.k_par *= 2*np.pi
-
-
-        
+     
     def _parse_taper_info(
         self,
         freq_taper=None,
         space_taper=None,
         freq_taper_kwargs=None,
         space_taper_kwargs=None,
-    ):
+        ):
         """Calculate the taper for doing the FT given the taper parameters."""
         taper_info = {"freq": {"type": None}, "space": {"type": None}}
         if freq_taper is None and space_taper is None:
@@ -445,7 +475,6 @@ class power_spectrum(object):
 
         self.taper_info = taper_info
         self.taper = taper
-
 
     def compute_2D_pspec(self, ps_data=None,
                          kperp_edges=None, kpar_edges=None,
@@ -659,7 +688,6 @@ class power_spectrum(object):
         weighted_k[occupied] = k_sums[occupied] / counts[occupied]
 
         return weighted_k, pspec, counts
-
   
     def compute_1d_from_2d(self, ps_data=None, bin_edges=None, nbins=20,
                            nbins_cyl=50, pspec_2D=None, k_par_bin = None, k_perp_bin=None,):
@@ -799,6 +827,7 @@ class power_spectrum(object):
         """
         if ps_data is None:
             ps_data = self.FFT_crossxx()
+            print(ps_data.shape)
         else:
             assert ps_data.shape == self.data.shape, \
                 "Shape of ps_data does not match shape of data."
