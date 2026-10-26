@@ -257,7 +257,7 @@ class fast_interferometer(object):
 
         npix_0, npix_1 = uv_map.shape
         psf = (
-            np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(uv_map, axes=(0, 1))))
+            np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(uv_map, axes=(0, 1))))
             * (self.du * self.dv * npix_0 * npix_1)
         )
         psf = self.interp_dirty_map_to_sky(psf)
