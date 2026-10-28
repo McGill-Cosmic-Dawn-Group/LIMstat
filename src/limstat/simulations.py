@@ -243,7 +243,7 @@ class foregrounds:
 				 Dec=-30.*units.deg,
 				 point_sources=True, diffuse=True,
 				 use_pygsm=True,
-				 pygsm_year = '2008'):
+				 pygsm_year = '2008', interpolate_synchrotron=False):
 
 		"""
 		Generate diffuse foregrounds and/or point sources for given FoV for 21cm observations.
@@ -275,6 +275,9 @@ class foregrounds:
 			use_pygsm: bool
 				Whether to use pyGSM to generate the diffuse foregrounds
 				or not. Default is True.
+			interpolate_synchrotron: bool
+				Whether to interpolate the pyGSM maps onto the passed
+				pixel grid. Default is False.
 		"""
 
 		if use_pygsm:
@@ -287,6 +290,7 @@ class foregrounds:
 
 		self.use_pygsm = use_pygsm
 		self.pygsm_year = pygsm_year
+		self.interpolate_synchrotron = interpolate_synchrotron
 
 	
 		# Check frequency units
@@ -556,14 +560,23 @@ class foregrounds:
 			# assert sky_maps.shape[0] == self.npix ** 2, \
 			#     "There is a dimension problem between your GSM map " \
 			#     "and your field."
-			obs_index = hp.pixelfunc.ang2pix(
-				hp.get_nside(sky_maps),
-				phi=self.pixel_coordinates[1].to(units.deg).value,
-				theta=self.pixel_coordinates[0].to(units.deg).value,
-				lonlat=True
+			if self.interpolate_synchrotron:
+				synchrotron_map = hp.pixelfunc.get_interp_val(
+					sky_maps,
+					phi=self.pixel_coordinates[1].to(units.deg).value,
+					theta=self.pixel_coordinates[0].to(units.deg).value,
+					lonlat=True
 				)
+			else:
+				obs_index = hp.pixelfunc.ang2pix(
+					hp.get_nside(sky_maps),
+					phi=self.pixel_coordinates[1].to(units.deg).value,
+					theta=self.pixel_coordinates[0].to(units.deg).value,
+					lonlat=True
+					)
 
-			synchrotron_map = sky_maps[:, obs_index]
+				synchrotron_map = sky_maps[:, obs_index]
+
 			synchrotron_map = np.moveaxis(synchrotron_map, 0, 2) * units.K
 
 		else:
