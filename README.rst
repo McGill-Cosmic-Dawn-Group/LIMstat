@@ -212,9 +212,44 @@ Typical workflow:
   **last** axis ``(y_npix, x_npix, n_freq)``, recomputing UV coverage at each
   channel
 
-**Custom UV.** Supply bin edges and a per-bin count map ``N`` instead of
-antenna binning. Coverage is derived automatically as a binary mask
-(``uv_map = 1`` where ``N > 0``). Pass either a tuple or a dict:
+**N_uv.** Supply a per-bin count map and either bin edges or bin centres.
+Edges are one sample longer than the count map on each axis. Arrays the
+same length as the count map are treated as centres, with a warning, and
+converted to edges. ``du`` and ``dv`` are the median spacings. The working
+cell is the finer of that spacing and the sky's own FFT spacing, and the
+axis stops at the sky Nyquist limit. A finer supplied spacing zero-pads
+the sky image. A coarser count map is inverse-transformed, zero-padded to
+that grid, and transformed back. Counts outside the sky Nyquist limit are
+dropped. The dirty map is returned on the original sky pixels.
+``docs/fast_interferometer_gridding.md`` shows where each path pads
+and where the transforms are taken.
+
+**Taper.** ``get_dirty_map``, ``get_psf``, ``get_noise_map``, and
+``get_dirty_cube`` take ``taper`` and ``taper_kwargs``. The default
+``taper=None`` leaves the gridded weights unchanged, and ``taper_kwargs``
+is ignored. A named window is applied after gridding, on the bounding box
+of the nonzero weights, so coverage that stops inside the sky grid rolls
+off at that edge. ``count_map`` stays the raw sample counts.
+
+``scale`` is accepted for every named window and defaults to 1. It sets
+the window length relative to that box. ``1`` puts the window end on the
+coverage edge, larger than ``1`` is gentler, and smaller than ``1``
+reaches zero inside the coverage. ``scale`` must be positive. A
+coverage of only a few cells has those cells on the box edge, so
+``scale=1`` downweights them.
+
+* ``blackmanharris``, ``hann``, ``hamming``, ``blackman``, and
+  ``bartlett`` take only ``scale``.
+* ``kaiser`` also takes ``beta``.
+* ``tukey`` also takes ``alpha``.
+* ``gaussian`` also takes ``std``, a fraction of the window length.
+
+A callable ``taper(uv_map)`` returns a window of the same shape.
+``scale`` is not applied again, and passing ``taper_kwargs`` raises.
+An unknown window name, an unknown key, or a shape key passed to a
+window that does not use it raises ``ValueError``.
+
+Pass a tuple:
 
 .. code-block:: python
 
@@ -237,6 +272,13 @@ antenna binning. Coverage is derived automatically as a binary mask
    # User count map N on a UV grid (u_grid, v_grid are bin edges in wavelengths)
    N_uv = (u_grid, v_grid, count_map)
    dirty = inst.get_dirty_map(true_sky, freq, N_uv=N_uv)
+   dirty = inst.get_dirty_map(
+       true_sky, freq, N_uv=N_uv,
+       taper='blackmanharris', taper_kwargs={'scale': 1.5},
+   )
+   psf = inst.get_psf(
+       freq, N_uv=N_uv, taper='kaiser', taper_kwargs={'scale': 1.5, 'beta': 8},
+   )
 
    # Multi-frequency cube: UV coverage updates each channel (u = b nu / c)
    freqs = np.linspace(140, 160, 10) * units.MHz
@@ -260,7 +302,7 @@ Worked examples live in the ``tutorials`` directory. The primary tutorial,
 
 ``tutorial_interferometer.ipynb`` demonstrates ``fast_interferometer`` end to
 end: antenna layouts, half-wave UV maps, dirty maps, PSFs, thermal noise,
-custom ``N_uv`` injection, multi-frequency ``get_dirty_cube``, and 1D
+``N_uv`` injection, multi-frequency ``get_dirty_cube``, and 1D
 east–west / north–south fringe examples.
 
 The ``Testing 3D Pspec + Window.ipynb`` notebook is an exploratory notebook for
